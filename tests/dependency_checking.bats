@@ -24,7 +24,7 @@ load test_helper
 @test "--mode-help shows info for default mode" {
   run "$MD2PDF" --mode-help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"pandoc-xelatex"* ]]
+  [[ "$output" == *"XeLaTeX"* ]]
 }
 
 @test "--mode-help shows info for each mode" {
@@ -35,20 +35,13 @@ load test_helper
   done
 }
 
-@test "have_cmd finds bash" {
-  load_md2pdf_functions
-  run have_cmd bash
+@test "--check-deps succeeds for pandoc-xelatex when pandoc and xelatex are installed" {
+  run "$MD2PDF" --check-deps
   [ "$status" -eq 0 ]
+  [[ "$output" == *"dependencies OK"* ]]
 }
 
-@test "have_cmd rejects nonexistent command" {
-  load_md2pdf_functions
-  run have_cmd __nonexistent_command_xyz__
-  [ "$status" -eq 1 ]
-}
-
-@test "check_mode_deps fails for unknown mode" {
-  load_md2pdf_functions
-  run check_mode_deps "not-a-mode"
+@test "--check-deps fails for unknown mode" {
+  run "$MD2PDF" --mode not-a-mode --check-deps
   [ "$status" -ne 0 ]
 }

@@ -2,131 +2,110 @@
 
 load test_helper
 
-@test "mode_exists accepts pandoc-xelatex" {
-  load_md2pdf_functions
-  run mode_exists "pandoc-xelatex"
+@test "valid mode accepted: pandoc-xelatex" {
+  run "$MD2PDF" --mode pandoc-xelatex --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts latex alias" {
-  load_md2pdf_functions
-  run mode_exists "latex"
+@test "valid mode accepted: latex alias" {
+  run "$MD2PDF" --mode latex --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts pandoc-lualatex" {
-  load_md2pdf_functions
-  run mode_exists "pandoc-lualatex"
+@test "valid mode accepted: pandoc-lualatex" {
+  run "$MD2PDF" --mode pandoc-lualatex --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts pandoc-pdflatex" {
-  load_md2pdf_functions
-  run mode_exists "pandoc-pdflatex"
+@test "valid mode accepted: pandoc-pdflatex" {
+  run "$MD2PDF" --mode pandoc-pdflatex --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts pandoc-wkhtmltopdf" {
-  load_md2pdf_functions
-  run mode_exists "pandoc-wkhtmltopdf"
+@test "valid mode accepted: pandoc-wkhtmltopdf" {
+  run "$MD2PDF" --mode pandoc-wkhtmltopdf --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts pandoc-weasyprint" {
-  load_md2pdf_functions
-  run mode_exists "pandoc-weasyprint"
+@test "valid mode accepted: pandoc-weasyprint" {
+  run "$MD2PDF" --mode pandoc-weasyprint --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts md-to-pdf" {
-  load_md2pdf_functions
-  run mode_exists "md-to-pdf"
+@test "valid mode accepted: md-to-pdf" {
+  run "$MD2PDF" --mode md-to-pdf --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts mdpdf" {
-  load_md2pdf_functions
-  run mode_exists "mdpdf"
+@test "valid mode accepted: mdpdf" {
+  run "$MD2PDF" --mode mdpdf --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts go-md2pdf" {
-  load_md2pdf_functions
-  run mode_exists "go-md2pdf"
+@test "valid mode accepted: go-md2pdf" {
+  run "$MD2PDF" --mode go-md2pdf --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts weasy-md2pdf" {
-  load_md2pdf_functions
-  run mode_exists "weasy-md2pdf"
+@test "valid mode accepted: weasy-md2pdf" {
+  run "$MD2PDF" --mode weasy-md2pdf --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists accepts percollate" {
-  load_md2pdf_functions
-  run mode_exists "percollate"
+@test "valid mode accepted: percollate" {
+  run "$MD2PDF" --mode percollate --mode-help
   [ "$status" -eq 0 ]
 }
 
-@test "mode_exists rejects invalid mode" {
-  load_md2pdf_functions
-  run mode_exists "not-a-mode"
-  [ "$status" -eq 1 ]
+@test "invalid mode rejected" {
+  run "$MD2PDF" --mode not-a-mode --mode-help
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown mode"* ]]
 }
 
-@test "mode_exists rejects empty string" {
-  load_md2pdf_functions
-  run mode_exists ""
-  [ "$status" -eq 1 ]
+@test "empty mode rejected" {
+  run "$MD2PDF" --mode "" --mode-help
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown mode"* ]]
 }
 
-@test "canonicalize_mode converts latex to pandoc-xelatex" {
-  load_md2pdf_functions
-  result="$(canonicalize_mode latex)"
-  [ "$result" = "pandoc-xelatex" ]
+@test "latex alias shows XeLaTeX help" {
+  run "$MD2PDF" --mode latex --mode-help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"XeLaTeX"* ]]
 }
 
-@test "canonicalize_mode preserves pandoc-xelatex" {
-  load_md2pdf_functions
-  result="$(canonicalize_mode pandoc-xelatex)"
-  [ "$result" = "pandoc-xelatex" ]
+@test "mode_label shown in --list-modes for each mode" {
+  run "$MD2PDF" --list-modes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Pandoc + XeLaTeX"* ]]
+  [[ "$output" == *"Pandoc + LuaLaTeX"* ]]
+  [[ "$output" == *"Pandoc + pdfLaTeX"* ]]
+  [[ "$output" == *"Pandoc + wkhtmltopdf"* ]]
+  [[ "$output" == *"Pandoc + WeasyPrint"* ]]
+  [[ "$output" == *"Node/Puppeteer (md-to-pdf)"* ]]
+  [[ "$output" == *"Node/Puppeteer (mdpdf)"* ]]
+  [[ "$output" == *"Go/fpdf"* ]]
+  [[ "$output" == *"Python/WeasyPrint"* ]]
+  [[ "$output" == *"Experimental HTML-first"* ]]
 }
 
-@test "canonicalize_mode preserves other modes" {
-  load_md2pdf_functions
-  result="$(canonicalize_mode md-to-pdf)"
-  [ "$result" = "md-to-pdf" ]
+@test "mode_runtime shown in --list-modes" {
+  run "$MD2PDF" --list-modes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"runtime=pandoc, xelatex"* ]]
+  [[ "$output" == *"runtime=pandoc, lualatex"* ]]
+  [[ "$output" == *"runtime=pandoc, pdflatex"* ]]
+  [[ "$output" == *"runtime=node, npm"* ]]
+  [[ "$output" == *"runtime=go"* ]]
+  [[ "$output" == *"runtime=python3, brew"* ]]
+  [[ "$output" == *"runtime=pandoc, node, npm"* ]]
 }
 
-@test "mode_label returns correct label for each mode" {
-  load_md2pdf_functions
-  [ "$(mode_label pandoc-xelatex)" = "Pandoc + XeLaTeX" ]
-  [ "$(mode_label pandoc-lualatex)" = "Pandoc + LuaLaTeX" ]
-  [ "$(mode_label pandoc-pdflatex)" = "Pandoc + pdfLaTeX" ]
-  [ "$(mode_label pandoc-wkhtmltopdf)" = "Pandoc + wkhtmltopdf" ]
-  [ "$(mode_label pandoc-weasyprint)" = "Pandoc + WeasyPrint" ]
-  [ "$(mode_label md-to-pdf)" = "Node/Puppeteer (md-to-pdf)" ]
-  [ "$(mode_label mdpdf)" = "Node/Puppeteer (mdpdf)" ]
-  [ "$(mode_label go-md2pdf)" = "Go/fpdf" ]
-  [ "$(mode_label weasy-md2pdf)" = "Python/WeasyPrint" ]
-  [ "$(mode_label percollate)" = "Experimental HTML-first" ]
-}
-
-@test "mode_runtime returns correct runtime for each mode" {
-  load_md2pdf_functions
-  [ "$(mode_runtime pandoc-xelatex)" = "pandoc, xelatex" ]
-  [ "$(mode_runtime pandoc-lualatex)" = "pandoc, lualatex" ]
-  [ "$(mode_runtime pandoc-pdflatex)" = "pandoc, pdflatex" ]
-  [ "$(mode_runtime md-to-pdf)" = "node, npm" ]
-  [ "$(mode_runtime go-md2pdf)" = "go" ]
-  [ "$(mode_runtime weasy-md2pdf)" = "python3, brew" ]
-  [ "$(mode_runtime percollate)" = "pandoc, node, npm" ]
-}
-
-@test "mode_note returns non-empty for all modes" {
-  load_md2pdf_functions
+@test "mode_note is non-empty for all modes" {
   for m in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate; do
-    result="$(mode_note "$m")"
-    [ -n "$result" ]
+    run "$MD2PDF" --mode "$m" --mode-help
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
   done
 }

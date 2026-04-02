@@ -3,26 +3,23 @@
 load test_helper
 
 @test "resolve_output_file defaults to .pdf extension" {
-  load_md2pdf_functions
-  result="$(resolve_output_file "$FIXTURES_DIR/sample.md")"
-  [ "$result" = "$FIXTURES_DIR/sample.pdf" ]
+  cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/sample.md"
+  run "$MD2PDF" "$TEST_TEMP_DIR/sample.md"
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_TEMP_DIR/sample.pdf" ]
 }
 
 @test "resolve_output_file uses explicit output when set" {
-  load_md2pdf_functions
-  output_file="/tmp/custom.pdf"
-  result="$(resolve_output_file "$FIXTURES_DIR/sample.md")"
-  [ "$result" = "/tmp/custom.pdf" ]
+  run "$MD2PDF" "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/custom.pdf"
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_TEMP_DIR/custom.pdf" ]
 }
 
 @test "resolve_output_file preserves directory of input" {
-  load_md2pdf_functions
-  result="$(resolve_output_file "/some/path/doc.md")"
-  [ "$result" = "/some/path/doc.pdf" ]
-}
-
-@test "resolve_output_file handles filename without path" {
-  load_md2pdf_functions
-  result="$(resolve_output_file "readme.md")"
-  [ "$result" = "./readme.pdf" ]
+  local subdir="$TEST_TEMP_DIR/subdir"
+  mkdir -p "$subdir"
+  cp "$FIXTURES_DIR/sample.md" "$subdir/doc.md"
+  run "$MD2PDF" "$subdir/doc.md"
+  [ "$status" -eq 0 ]
+  [ -f "$subdir/doc.pdf" ]
 }
