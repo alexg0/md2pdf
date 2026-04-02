@@ -120,7 +120,7 @@ md2pdf --mode go-md2pdf --check-deps
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `MD2PDF_TOOL_HOME` | Override tool install root (default: `~/.local/share/md2pdf.sh`) |
+| `MD2PDF_TOOL_HOME` | Override tool install root (default: `~/.local/share/md2pdf`) |
 | `MD2PDF_DEBUG=1` | Keep temporary files on failure for debugging |
 
 ## Testing

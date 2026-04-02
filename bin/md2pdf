@@ -23,13 +23,13 @@
 #   colliding global binaries such as `md2pdf`.
 #
 # Tool home override:
-#   MD2PDF_TOOL_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/md2pdf.sh"
+#   MD2PDF_TOOL_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/md2pdf"
 #
 # Examples:
-#   ./md2pdf.sh notes.md
-#   ./md2pdf.sh --mode md-to-pdf notes.md out.pdf
-#   ./md2pdf.sh --mode go-md2pdf --check-deps
-#   ./md2pdf.sh --install-deps-all
+#   ./bin/md2pdf notes.md
+#   ./bin/md2pdf --mode md-to-pdf notes.md out.pdf
+#   ./bin/md2pdf --mode go-md2pdf --check-deps
+#   ./bin/md2pdf --install-deps-all
 #
 # macOS latex dependencies:
 #   brew install pandoc
@@ -64,7 +64,7 @@ input_file=""
 output_file=""
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-md2pdf_tool_home="${MD2PDF_TOOL_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/md2pdf.sh}"
+md2pdf_tool_home="${MD2PDF_TOOL_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/md2pdf}"
 
 cleanup() {
   if [[ "${MD2PDF_DEBUG:-0}" == "1" ]]; then

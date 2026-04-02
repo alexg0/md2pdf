@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Absolute path to the md2pdf.sh script
-MD2PDF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/md2pdf.sh"
+# Absolute path to the md2pdf script
+MD2PDF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/md2pdf"
 
 # Directory containing test fixtures
 FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/fixtures" && pwd)"
