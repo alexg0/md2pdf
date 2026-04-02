@@ -1,0 +1,1264 @@
+#! /bin/bash
+
+# Convert Markdown to PDF using multiple renderer backends.
+#
+# Default mode:
+#   pandoc-xelatex (alias: latex)
+#
+# Supported modes:
+#   pandoc-xelatex     - Pandoc + XeLaTeX (default)
+#   latex              - Alias for pandoc-xelatex
+#   pandoc-lualatex    - Pandoc + LuaLaTeX
+#   pandoc-pdflatex    - Pandoc + pdfLaTeX
+#   pandoc-wkhtmltopdf - Pandoc + wkhtmltopdf
+#   pandoc-weasyprint  - Pandoc + WeasyPrint
+#   md-to-pdf          - Node/Puppeteer via simonhaenisch/md-to-pdf
+#   mdpdf              - Node/Puppeteer via elliotblackburn/mdpdf
+#   go-md2pdf          - Go/fpdf via solworktech/md2pdf
+#   weasy-md2pdf       - Python/WeasyPrint via jmaupetit/md2pdf
+#   percollate         - Experimental HTML-first mode via danburzo/percollate
+#
+# Install behavior:
+#   Third-party engines are installed in an isolated tool home to avoid
+#   colliding global binaries such as `md2pdf`.
+#
+# Tool home override:
+#   MD2PDF_TOOL_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/md2pdf.sh"
+#
+# Examples:
+#   ./md2pdf.sh notes.md
+#   ./md2pdf.sh --mode md-to-pdf notes.md out.pdf
+#   ./md2pdf.sh --mode go-md2pdf --check-deps
+#   ./md2pdf.sh --install-deps-all
+#
+# macOS latex dependencies:
+#   brew install pandoc
+#   brew install --cask basictex
+#   brew install --cask font-noto-serif
+
+set -euo pipefail
+
+default_font_family="Noto Serif"
+font_family="$default_font_family"
+font_cask="font-noto-serif"
+default_margin="1in"
+default_fontsize="11pt"
+default_toc=1
+default_page_numbers=1
+default_mode="pandoc-xelatex"
+
+declare -a warnings=()
+declare -a temp_dirs=()
+
+mode="$default_mode"
+title=""
+author=""
+margin="$default_margin"
+fontsize="$default_fontsize"
+toc_enabled="$default_toc"
+toc_explicit=0
+page_numbers_enabled="$default_page_numbers"
+font_explicit=0
+action="render"
+input_file=""
+output_file=""
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+md2pdf_tool_home="${MD2PDF_TOOL_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/md2pdf.sh}"
+
+cleanup() {
+  if [[ "${MD2PDF_DEBUG:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ "${#temp_dirs[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local dir
+  for dir in "${temp_dirs[@]}"; do
+    [[ -n "$dir" && -d "$dir" ]] && rm -rf "$dir"
+  done
+  return 0
+}
+trap cleanup EXIT
+
+usage() {
+  cat <<USAGE
+Usage: $0 [options] input.md [output.pdf]
+
+Common options:
+  --mode MODE         Renderer mode (default: pandoc-xelatex)
+  -t TITLE            PDF title (default: first # H1 from file, or filename)
+  -a AUTHOR           Author line (default: none)
+  --font FONT         Preferred body font where supported (default: $default_font_family)
+  -m MARGIN           Page margin (default: $default_margin)
+  -s SIZE             Font size (default: $default_fontsize)
+  --page-numbers      Show page numbers where supported (default: on)
+  --no-page-numbers   Hide page numbers where supported
+  --no-toc            Omit table of contents where supported
+
+Actions:
+  --list-modes        List modes and install status
+  --check-deps        Validate dependencies for the selected mode
+  --check-deps-all    Validate dependencies for all modes
+  --install-deps      Install dependencies for the selected mode
+  --install-deps-all  Install dependencies for all modes
+  --mode-help         Show notes for the selected mode
+
+Modes:
+  pandoc-xelatex     Pandoc + XeLaTeX (default)
+  latex              Alias for pandoc-xelatex
+  pandoc-lualatex    Pandoc + LuaLaTeX
+  pandoc-pdflatex    Pandoc + pdfLaTeX
+  pandoc-wkhtmltopdf Pandoc + wkhtmltopdf
+  pandoc-weasyprint  Pandoc + WeasyPrint
+  md-to-pdf          Node/Puppeteer via md-to-pdf
+  mdpdf              Node/Puppeteer via mdpdf
+  go-md2pdf          Go/fpdf renderer
+  weasy-md2pdf       Python/WeasyPrint renderer
+  percollate         Experimental HTML-first renderer
+
+Environment:
+  MD2PDF_TOOL_HOME  Override tool install root
+  MD2PDF_DEBUG=1    Keep temporary files on failure
+
+Examples:
+  $0 README.md
+  $0 --mode pandoc-lualatex README.md README.pdf
+  $0 --mode md-to-pdf README.md README.pdf
+  $0 --mode pandoc-xelatex --install-deps
+  $0 --list-modes
+USAGE
+  exit "${1:-0}"
+}
+
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+warn() {
+  warnings+=("$*")
+}
+
+flush_warnings() {
+  if [[ "${#warnings[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local message
+  for message in "${warnings[@]}"; do
+    echo "warning: $message" >&2
+  done
+}
+
+new_temp_dir() {
+  local dir
+  dir="$(mktemp -d)"
+  temp_dirs+=("$dir")
+  echo "$dir"
+}
+
+canonicalize_mode() {
+  case "$1" in
+    latex) echo "pandoc-xelatex" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+mode_exists() {
+  case "$1" in
+    latex|pandoc-xelatex|pandoc-lualatex|pandoc-pdflatex|pandoc-wkhtmltopdf|pandoc-weasyprint|md-to-pdf|mdpdf|go-md2pdf|weasy-md2pdf|percollate) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+mode_label() {
+  case "$1" in
+    pandoc-xelatex) echo "Pandoc + XeLaTeX" ;;
+    pandoc-lualatex) echo "Pandoc + LuaLaTeX" ;;
+    pandoc-pdflatex) echo "Pandoc + pdfLaTeX" ;;
+    pandoc-wkhtmltopdf) echo "Pandoc + wkhtmltopdf" ;;
+    pandoc-weasyprint) echo "Pandoc + WeasyPrint" ;;
+    md-to-pdf) echo "Node/Puppeteer (md-to-pdf)" ;;
+    mdpdf) echo "Node/Puppeteer (mdpdf)" ;;
+    go-md2pdf) echo "Go/fpdf" ;;
+    weasy-md2pdf) echo "Python/WeasyPrint" ;;
+    percollate) echo "Experimental HTML-first" ;;
+  esac
+}
+
+mode_runtime() {
+  case "$1" in
+    pandoc-xelatex) echo "pandoc, xelatex" ;;
+    pandoc-lualatex) echo "pandoc, lualatex" ;;
+    pandoc-pdflatex) echo "pandoc, pdflatex" ;;
+    pandoc-wkhtmltopdf) echo "pandoc, wkhtmltopdf" ;;
+    pandoc-weasyprint) echo "pandoc, weasyprint" ;;
+    md-to-pdf) echo "node, npm" ;;
+    mdpdf) echo "node, npm" ;;
+    go-md2pdf) echo "go" ;;
+    weasy-md2pdf) echo "python3, brew" ;;
+    percollate) echo "pandoc, node, npm" ;;
+  esac
+}
+
+mode_note() {
+  case "$1" in
+    pandoc-xelatex)
+      cat <<EOF2
+pandoc-xelatex is the default mode. It preserves the original Pandoc/XeLaTeX
+path, inherits the current title block behavior, and supports
+margin/font size/TOC. The legacy 'latex' name remains a backward-compatible
+alias.
+EOF2
+      ;;
+    pandoc-lualatex)
+      cat <<EOF2
+pandoc-lualatex keeps the Pandoc pipeline but swaps in LuaLaTeX. It supports
+Unicode fonts like xelatex and is useful for comparing TeX engine differences.
+EOF2
+      ;;
+    pandoc-pdflatex)
+      cat <<EOF2
+pandoc-pdflatex keeps the Pandoc pipeline but uses pdfLaTeX. It works best with
+ASCII-friendly content; Unicode and custom system fonts are more limited.
+EOF2
+      ;;
+    pandoc-wkhtmltopdf)
+      cat <<EOF2
+pandoc-wkhtmltopdf uses Pandoc's HTML pipeline and wkhtmltopdf for rendering.
+Margin and font-size are mapped through temporary CSS, but author metadata is not.
+EOF2
+      ;;
+    pandoc-weasyprint)
+      cat <<EOF2
+pandoc-weasyprint uses Pandoc's HTML pipeline and WeasyPrint for rendering.
+Margin and font-size are mapped through temporary CSS, but author metadata is not.
+EOF2
+      ;;
+    md-to-pdf)
+      cat <<EOF2
+md-to-pdf uses Puppeteer. It supports title, margin, and font-size mapping.
+Author and auto-TOC are not mapped cleanly and will warn when requested.
+EOF2
+      ;;
+    mdpdf)
+      cat <<EOF2
+mdpdf also uses Puppeteer. It maps title, border (from margin), and font-size
+via a temporary stylesheet. Author and auto-TOC are not mapped.
+EOF2
+      ;;
+    go-md2pdf)
+      cat <<EOF2
+go-md2pdf is a non-browser renderer. It maps title/author and supports an
+auto-generated TOC, but it does not support CSS-style margin/font-size control.
+EOF2
+      ;;
+    weasy-md2pdf)
+      cat <<EOF2
+weasy-md2pdf uses Python + WeasyPrint. Margin/font-size are applied via a
+temporary stylesheet. Title/author/auto-TOC are not mapped in this phase.
+EOF2
+      ;;
+    percollate)
+      cat <<EOF2
+percollate is experimental. It first converts Markdown to standalone HTML with
+pandoc, then renders that HTML through percollate. It is less apples-to-apples
+than the other Markdown-first engines.
+EOF2
+      ;;
+  esac
+}
+
+mode_help() {
+  mode_note "$mode"
+}
+
+npm_mode_dir() {
+  echo "$md2pdf_tool_home/npm/$1"
+}
+
+npm_mode_bin() {
+  echo "$(npm_mode_dir "$1")/node_modules/.bin/$2"
+}
+
+go_mode_bin() {
+  echo "$md2pdf_tool_home/go-md2pdf/bin/md2pdf"
+}
+
+python_mode_dir() {
+  echo "$md2pdf_tool_home/python/weasy-md2pdf"
+}
+
+python_mode_bin() {
+  echo "$(python_mode_dir)/bin/md2pdf"
+}
+
+python_mode_python() {
+  echo "$(python_mode_dir)/bin/python"
+}
+
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+require_cmd() {
+  local cmd="$1"
+  local install_hint="$2"
+
+  if ! have_cmd "$cmd"; then
+    fail "$cmd not found on PATH. Install: $install_hint"
+  fi
+}
+
+brew_cmd() {
+  if have_cmd brew; then
+    command -v brew
+  elif [[ -x /opt/homebrew/bin/brew ]]; then
+    echo /opt/homebrew/bin/brew
+  elif [[ -x /usr/local/bin/brew ]]; then
+    echo /usr/local/bin/brew
+  else
+    return 1
+  fi
+}
+
+font_available() {
+  local tmpdir tex_path status
+  tmpdir="$(mktemp -d)"
+  tex_path="$tmpdir/font-check.tex"
+
+  cat > "$tex_path" <<EOF2
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{$font_family}
+\begin{document}
+font check
+\end{document}
+EOF2
+
+  xelatex     -interaction=nonstopmode     -halt-on-error     -output-directory "$tmpdir"     "$tex_path" >/dev/null 2>&1
+  status=$?
+  rm -rf "$tmpdir"
+  return "$status"
+}
+
+font_available_lualatex() {
+  local tmpdir tex_path status
+  tmpdir="$(mktemp -d)"
+  tex_path="$tmpdir/font-check.tex"
+
+  cat > "$tex_path" <<EOF2
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{$font_family}
+\begin{document}
+font check
+\end{document}
+EOF2
+
+  lualatex     -interaction=nonstopmode     -halt-on-error     -output-directory "$tmpdir"     "$tex_path" >/dev/null 2>&1
+  status=$?
+  rm -rf "$tmpdir"
+  return "$status"
+}
+
+
+ensure_font() {
+  local install_cmd="brew install --cask $font_cask"
+  local brew_bin
+
+  if font_available; then
+    return 0
+  fi
+
+  if [[ "$font_family" == "$default_font_family" ]] && brew_bin="$(brew_cmd)"; then
+    echo "Missing font '$font_family'. Installing via: $install_cmd" >&2
+    if ! "$brew_bin" list --cask "$font_cask" >/dev/null 2>&1; then
+      "$brew_bin" install --cask "$font_cask" >&2
+    fi
+    if font_available; then
+      return 0
+    fi
+  fi
+
+  if [[ "$font_family" == "$default_font_family" ]]; then
+    fail "$font_family not available to xelatex. Install: $install_cmd"
+  fi
+
+  fail "$font_family not available to xelatex. Install the font on your system, then rerun."
+}
+
+latex_date_for_file() {
+  if date -r "$1" '+%B %d, %Y' >/dev/null 2>&1; then
+    date -r "$1" '+%B %d, %Y'
+  else
+    date '+%B %d, %Y'
+  fi
+}
+
+check_pandoc_engine_deps() {
+  local engine="$1"
+  local ok=0
+
+  if ! have_cmd pandoc; then
+    echo "missing: pandoc (install: brew install pandoc)" >&2
+    ok=1
+  fi
+
+  if ! have_cmd "$engine"; then
+    case "$engine" in
+      xelatex|lualatex|pdflatex)
+        echo "missing: $engine (install: brew install --cask basictex)" >&2
+        ;;
+      wkhtmltopdf)
+        echo "missing: wkhtmltopdf (install via your preferred package manager)" >&2
+        ;;
+      weasyprint)
+        echo "missing: weasyprint (install: brew install weasyprint)" >&2
+        ;;
+      *)
+        echo "missing: $engine" >&2
+        ;;
+    esac
+    ok=1
+  fi
+
+  if [[ "$engine" == "xelatex" ]] && have_cmd xelatex && ! font_available; then
+    echo "missing: latex font '$font_family'" >&2
+    ok=1
+  fi
+
+  if [[ "$engine" == "lualatex" ]]; then
+    if have_cmd lualatex && ! font_available_lualatex; then
+      echo "missing: latex font '$font_family' for lualatex" >&2
+      ok=1
+    fi
+    if have_cmd kpsewhich && ! kpsewhich lualatex-math.sty >/dev/null 2>&1; then
+      echo "missing: lualatex-math.sty for pandoc+lualatex (install TeX Live package providing it)" >&2
+      ok=1
+    fi
+  fi
+
+  if [[ "$engine" == "wkhtmltopdf" ]] && have_cmd wkhtmltopdf && ! wkhtmltopdf --version >/dev/null 2>&1; then
+    echo "missing: working wkhtmltopdf runtime (current PATH entry is not runnable)" >&2
+    ok=1
+  fi
+
+  if [[ "$engine" == "weasyprint" ]] && have_cmd weasyprint && ! weasyprint --version >/dev/null 2>&1; then
+    echo "missing: working weasyprint runtime" >&2
+    ok=1
+  fi
+
+  return "$ok"
+}
+
+
+detect_title() {
+  local file="$1"
+  local detected
+
+  if [[ -n "$title" ]]; then
+    echo "$title"
+    return 0
+  fi
+
+  detected="$(grep -m1 '^# ' "$file" | sed 's/^# //' || true)"
+  if [[ -z "$detected" ]]; then
+    detected="$(basename "$file")"
+    detected="${detected%.*}"
+  fi
+
+  echo "$detected"
+}
+
+resolve_output_file() {
+  local file="$1"
+  if [[ -n "$output_file" ]]; then
+    echo "$output_file"
+  else
+    echo "$(dirname "$file")/$(basename "$file" .md).pdf"
+  fi
+}
+
+ensure_input_file() {
+  if [[ -z "$input_file" ]]; then
+    usage 1
+  fi
+
+  if [[ ! -f "$input_file" ]]; then
+    fail "File not found: $input_file"
+  fi
+}
+
+ensure_parent_dir() {
+  local parent
+  parent="$(dirname "$1")"
+  mkdir -p "$parent"
+}
+
+ensure_npm_package() {
+  local package_name="$1"
+  local install_dir
+  install_dir="$(npm_mode_dir "$package_name")"
+
+  require_cmd node "brew install node"
+  require_cmd npm "brew install node"
+
+  mkdir -p "$install_dir"
+  if [[ ! -f "$install_dir/package.json" ]]; then
+    cat > "$install_dir/package.json" <<EOF2
+{
+  "name": "md2pdf-sh-$package_name",
+  "private": true
+}
+EOF2
+  fi
+
+  (
+    cd "$install_dir"
+    npm install --no-save "$package_name"
+  )
+}
+
+ensure_weasy_env() {
+  local env_dir
+  local brew_bin
+  env_dir="$(python_mode_dir)"
+
+  require_cmd python3 "brew install python"
+  brew_bin="$(brew_cmd || true)"
+  if [[ -z "$brew_bin" ]]; then
+    fail "brew is required to install weasyprint. Install Homebrew, then rerun with --install-deps --mode weasy-md2pdf"
+  fi
+
+  "$brew_bin" install weasyprint
+
+  if [[ ! -x "$(python_mode_python)" ]]; then
+    mkdir -p "$env_dir"
+    python3 -m venv "$env_dir"
+  fi
+
+  "$(python_mode_python)" -m pip install --upgrade pip
+  "$(python_mode_python)" -m pip install 'md2pdf[cli]'
+}
+
+install_mode_deps() {
+  local selected_mode="$1"
+  local brew_bin
+
+  case "$selected_mode" in
+    pandoc-xelatex|pandoc-lualatex|pandoc-pdflatex)
+      brew_bin="$(brew_cmd || true)"
+      [[ -n "$brew_bin" ]] || fail "brew is required for pandoc/latex dependency installation"
+      "$brew_bin" install pandoc
+      "$brew_bin" install --cask basictex
+      if [[ "$selected_mode" != "pandoc-pdflatex" ]]; then
+        "$brew_bin" install --cask "$font_cask"
+      fi
+      ;;
+    pandoc-wkhtmltopdf)
+      require_cmd pandoc "brew install pandoc"
+      require_cmd wkhtmltopdf "install wkhtmltopdf via your preferred package manager"
+      ;;
+    pandoc-weasyprint)
+      brew_bin="$(brew_cmd || true)"
+      [[ -n "$brew_bin" ]] || fail "brew is required for pandoc-weasyprint dependency installation"
+      "$brew_bin" install pandoc
+      "$brew_bin" install weasyprint
+      ;;
+    md-to-pdf)
+      ensure_npm_package "md-to-pdf"
+      ;;
+    mdpdf)
+      ensure_npm_package "mdpdf"
+      ;;
+    go-md2pdf)
+      require_cmd go "brew install go"
+      mkdir -p "$md2pdf_tool_home/go-md2pdf/bin"
+      GOBIN="$md2pdf_tool_home/go-md2pdf/bin" go install github.com/solworktech/md2pdf/v2/cmd/md2pdf@latest
+      ;;
+    weasy-md2pdf)
+      ensure_weasy_env
+      ;;
+    percollate)
+      ensure_npm_package "percollate"
+      ;;
+    *)
+      fail "Unknown mode: $selected_mode"
+      ;;
+  esac
+}
+
+
+check_latex_deps() {
+  check_pandoc_engine_deps xelatex
+}
+
+check_pandoc_lualatex_deps() {
+  check_pandoc_engine_deps lualatex
+}
+
+check_pandoc_pdflatex_deps() {
+  check_pandoc_engine_deps pdflatex
+}
+
+check_pandoc_wkhtmltopdf_deps() {
+  check_pandoc_engine_deps wkhtmltopdf
+}
+
+check_pandoc_weasyprint_deps() {
+  check_pandoc_engine_deps weasyprint
+}
+
+
+check_md_to_pdf_deps() {
+  local ok=0
+  if ! have_cmd node; then
+    echo "missing: node (install: brew install node)" >&2
+    ok=1
+  fi
+  if [[ ! -x "$(npm_mode_bin md-to-pdf md-to-pdf)" ]]; then
+    echo "missing: md-to-pdf install in $md2pdf_tool_home (run: $0 --mode md-to-pdf --install-deps)" >&2
+    ok=1
+  fi
+  return "$ok"
+}
+
+check_mdpdf_deps() {
+  local ok=0
+  if ! have_cmd node; then
+    echo "missing: node (install: brew install node)" >&2
+    ok=1
+  fi
+  if [[ ! -x "$(npm_mode_bin mdpdf mdpdf)" ]]; then
+    echo "missing: mdpdf install in $md2pdf_tool_home (run: $0 --mode mdpdf --install-deps)" >&2
+    ok=1
+  fi
+  return "$ok"
+}
+
+check_go_md2pdf_deps() {
+  local ok=0
+  if ! have_cmd go; then
+    echo "missing: go (install: brew install go)" >&2
+    ok=1
+  fi
+  if [[ ! -x "$(go_mode_bin)" ]]; then
+    echo "missing: go-md2pdf binary in $md2pdf_tool_home (run: $0 --mode go-md2pdf --install-deps)" >&2
+    ok=1
+  fi
+  return "$ok"
+}
+
+check_weasy_md2pdf_deps() {
+  local ok=0
+  if ! have_cmd python3; then
+    echo "missing: python3 (install: brew install python)" >&2
+    ok=1
+  fi
+  if ! have_cmd weasyprint; then
+    echo "missing: weasyprint (install: brew install weasyprint)" >&2
+    ok=1
+  fi
+  if [[ ! -x "$(python_mode_bin)" ]]; then
+    echo "missing: weasy-md2pdf install in $md2pdf_tool_home (run: $0 --mode weasy-md2pdf --install-deps)" >&2
+    ok=1
+  elif ! "$(python_mode_python)" - <<'PY' >/dev/null 2>&1
+import md2pdf  # noqa: F401
+import weasyprint  # noqa: F401
+PY
+  then
+    echo "missing: Python md2pdf/weasyprint runtime health (rerun: $0 --mode weasy-md2pdf --install-deps)" >&2
+    ok=1
+  fi
+  return "$ok"
+}
+
+check_percollate_deps() {
+  local ok=0
+  if ! have_cmd pandoc; then
+    echo "missing: pandoc (install: brew install pandoc)" >&2
+    ok=1
+  fi
+  if ! have_cmd node; then
+    echo "missing: node (install: brew install node)" >&2
+    ok=1
+  fi
+  if [[ ! -x "$(npm_mode_bin percollate percollate)" ]]; then
+    echo "missing: percollate install in $md2pdf_tool_home (run: $0 --mode percollate --install-deps)" >&2
+    ok=1
+  fi
+  return "$ok"
+}
+
+check_mode_deps() {
+  case "$1" in
+    pandoc-xelatex) check_latex_deps ;;
+    pandoc-lualatex) check_pandoc_lualatex_deps ;;
+    pandoc-pdflatex) check_pandoc_pdflatex_deps ;;
+    pandoc-wkhtmltopdf) check_pandoc_wkhtmltopdf_deps ;;
+    pandoc-weasyprint) check_pandoc_weasyprint_deps ;;
+    md-to-pdf) check_md_to_pdf_deps ;;
+    mdpdf) check_mdpdf_deps ;;
+    go-md2pdf) check_go_md2pdf_deps ;;
+    weasy-md2pdf) check_weasy_md2pdf_deps ;;
+    percollate) check_percollate_deps ;;
+    *) fail "Unknown mode: $1" ;;
+  esac
+}
+
+
+list_modes() {
+  local selected_mode status extra
+  for selected_mode in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate; do
+    if check_mode_deps "$selected_mode" >/dev/null 2>&1; then
+      status="installed"
+    else
+      status="missing deps"
+    fi
+
+    extra=""
+    [[ "$selected_mode" == "pandoc-xelatex" ]] && extra=" [alias: latex]"
+    [[ "$selected_mode" == "percollate" ]] && extra=" [experimental]"
+    printf '%-20s %-28s runtime=%-20s status=%s%s
+'       "$selected_mode"       "$(mode_label "$selected_mode")"       "$(mode_runtime "$selected_mode")"       "$status"       "$extra"
+  done
+}
+
+
+warn_unmapped_options() {
+  local selected_mode="$1"
+
+  case "$selected_mode" in
+    pandoc-xelatex|pandoc-lualatex|pandoc-pdflatex)
+      [[ "$selected_mode" == "pandoc-pdflatex" && "$font_explicit" == "1" ]] && warn "mode pandoc-pdflatex does not support arbitrary system font selection"
+      return 0
+      ;;
+    pandoc-wkhtmltopdf|pandoc-weasyprint)
+      [[ -n "$author" ]] && warn "mode $selected_mode ignores -a/--author"
+      ;;
+    md-to-pdf)
+      [[ -n "$author" ]] && warn "mode md-to-pdf ignores -a/--author"
+      [[ "$toc_enabled" != "$default_toc" ]] && warn "mode md-to-pdf does not support auto-generated TOC"
+      ;;
+    mdpdf)
+      [[ -n "$author" ]] && warn "mode mdpdf ignores -a/--author"
+      [[ "$toc_enabled" != "$default_toc" ]] && warn "mode mdpdf does not support auto-generated TOC"
+      ;;
+    go-md2pdf)
+      [[ "$margin" != "$default_margin" ]] && warn "mode go-md2pdf ignores -m/--margin"
+      [[ "$fontsize" != "$default_fontsize" ]] && warn "mode go-md2pdf ignores -s/--size"
+      [[ "$font_explicit" == "1" ]] && warn "mode go-md2pdf does not support arbitrary system font selection"
+      ;;
+    weasy-md2pdf)
+      [[ -n "$title" ]] && warn "mode weasy-md2pdf ignores -t/--title"
+      [[ -n "$author" ]] && warn "mode weasy-md2pdf ignores -a/--author"
+      [[ "$toc_enabled" != "$default_toc" ]] && warn "mode weasy-md2pdf does not support auto-generated TOC"
+      ;;
+    percollate)
+      ;;
+  esac
+
+  return 0
+}
+
+
+write_file() {
+  local path="$1"
+  shift
+  cat > "$path" <<<"$*"
+}
+
+write_json() {
+  local path="$1"
+  shift
+  python3 - "$path" "$@" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+raw = sys.argv[2:]
+pairs = dict(item.split('=', 1) for item in raw)
+obj = {}
+for key, value in pairs.items():
+    if value == '__NONE__':
+        continue
+    obj[key] = json.loads(value)
+with open(path, 'w', encoding='utf-8') as fh:
+    json.dump(obj, fh)
+PY
+}
+
+write_weasy_css() {
+  local css_path="$1"
+  cat > "$css_path" <<EOF2
+@page {
+  margin: $margin;
+$([ "$page_numbers_enabled" == "1" ] && printf '  @bottom-center { content: counter(page); font-family: "%s", serif; font-size: 9pt; }\n' "$font_family")
+}
+body { font-size: $fontsize; font-family: "$font_family", serif; }
+EOF2
+}
+
+write_font_css() {
+  local css_path="$1"
+  cat > "$css_path" <<EOF2
+body { font-size: $fontsize; font-family: "$font_family", serif; }
+EOF2
+}
+
+write_puppeteer_footer_template() {
+  local footer_path="$1"
+  cat > "$footer_path" <<EOF2
+<style>
+  body {
+    margin: 0;
+    width: 100%;
+    text-align: center;
+    font-family: "$font_family", serif;
+    font-size: 9px;
+    color: #444;
+  }
+</style>
+<div><span class="pageNumber"></span></div>
+EOF2
+}
+
+render_pandoc_engine() {
+  local engine="$1"
+  local detected_title resolved_output tmpdir tmp_md resource_path css_file
+  local -a pandoc_cmd
+
+  require_cmd pandoc "brew install pandoc"
+  require_cmd "$engine" "install $engine via your preferred package manager"
+  if [[ "$engine" == "xelatex" ]]; then
+    ensure_font
+  elif [[ "$engine" == "lualatex" ]] && ! font_available_lualatex; then
+    fail "$font_family not available to lualatex. Install the font on your system, then rerun."
+  fi
+
+  detected_title="$(detect_title "$input_file")"
+  resolved_output="$(resolve_output_file "$input_file")"
+  ensure_parent_dir "$resolved_output"
+
+  tmpdir="$(new_temp_dir)"
+  tmp_md="$tmpdir/combined.md"
+  {
+    echo "% $detected_title"
+    [[ -n "$author" ]] && echo "% $author" || echo "%"
+    echo "% $(latex_date_for_file "$input_file")"
+    echo
+    cat "$input_file"
+  } > "$tmp_md"
+
+  if [[ "$engine" == "xelatex" || "$engine" == "lualatex" || "$engine" == "pdflatex" ]]; then
+    python3 - "$tmp_md" "$engine" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+engine = sys.argv[2]
+text = p.read_text(encoding='utf-8')
+text = text.replace("✅", "[OK]")
+text = text.replace("⚠️", "[!]")
+text = text.replace("✓", "[x]")
+text = text.replace("≥", ">=")
+text = text.replace("→", "->")
+if engine == "pdflatex":
+    text = text.replace("—", "--")
+    text = text.replace("–", "-")
+    text = text.replace("’", "'")
+    text = text.replace("“", '"')
+    text = text.replace("”", '"')
+p.write_text(text, encoding='utf-8')
+PY
+  fi
+
+  resource_path="$(dirname "$input_file"):.:$script_dir"
+  pandoc_cmd=(
+    pandoc "$tmp_md"
+    --number-sections
+    --resource-path="$resource_path"
+    --pdf-engine="$engine"
+    -V linkcolor:blue
+    -V urlcolor:blue
+    -o "$resolved_output"
+  )
+
+  case "$engine" in
+    xelatex|lualatex)
+      pandoc_cmd+=(-V "geometry:margin=$margin" -V "fontsize:$fontsize" -V "mainfont:$font_family")
+      ;;
+    pdflatex)
+      pandoc_cmd+=(-V "geometry:margin=$margin" -V "fontsize:$fontsize")
+      ;;
+    wkhtmltopdf|weasyprint)
+      css_file="$tmpdir/pandoc-html.css"
+      cat > "$css_file" <<EOF2
+@page {
+  margin: $margin;
+$([ "$engine" == "weasyprint" ] && [ "$page_numbers_enabled" == "1" ] && printf '  @bottom-center { content: counter(page); font-family: "%s", serif; font-size: 9pt; }\n' "$font_family")
+}
+body { font-size: $fontsize; font-family: "$font_family", serif; }
+EOF2
+      pandoc_cmd+=(--css "$css_file")
+      if [[ "$engine" == "wkhtmltopdf" && "$page_numbers_enabled" == "1" ]]; then
+        pandoc_cmd+=(--pdf-engine-opt=--footer-center --pdf-engine-opt=[page] --pdf-engine-opt=--footer-font-size --pdf-engine-opt=9)
+      fi
+      ;;
+  esac
+
+  [[ "$toc_enabled" == "1" ]] && pandoc_cmd+=(--toc)
+  if [[ "$engine" == "xelatex" || "$engine" == "lualatex" || "$engine" == "pdflatex" ]]; then
+    if [[ "$page_numbers_enabled" == "1" ]]; then
+      pandoc_cmd+=(-V "pagestyle:plain")
+    else
+      pandoc_cmd+=(-V "pagestyle:empty")
+    fi
+  fi
+  "${pandoc_cmd[@]}"
+  echo "$resolved_output"
+}
+
+render_pandoc_xelatex() {
+  render_pandoc_engine xelatex
+}
+
+render_pandoc_lualatex() {
+  render_pandoc_engine lualatex
+}
+
+render_pandoc_pdflatex() {
+  render_pandoc_engine pdflatex
+}
+
+render_pandoc_wkhtmltopdf() {
+  render_pandoc_engine wkhtmltopdf
+}
+
+render_pandoc_weasyprint() {
+  render_pandoc_engine weasyprint
+}
+
+
+render_md_to_pdf() {
+  local resolved_output tmpdir config_json css_file footer_file binary
+
+  binary="$(npm_mode_bin md-to-pdf md-to-pdf)"
+  [[ -x "$binary" ]] || fail "md-to-pdf is not installed. Run: $0 --mode md-to-pdf --install-deps"
+
+  resolved_output="$(resolve_output_file "$input_file")"
+  ensure_parent_dir "$resolved_output"
+  tmpdir="$(new_temp_dir)"
+  config_json="$tmpdir/md-to-pdf.json"
+  css_file="$tmpdir/md-to-pdf.css"
+  write_font_css "$css_file"
+  footer_file="$tmpdir/md-to-pdf-footer.html"
+  [[ "$page_numbers_enabled" == "1" ]] && write_puppeteer_footer_template "$footer_file"
+
+  python3 - "$config_json" "$resolved_output" "$css_file" "$input_file" "$margin" "$fontsize" "$(detect_title "$input_file")" "$page_numbers_enabled" "$footer_file" <<'PY'
+import json
+import os
+import sys
+config_path, output_path, css_path, input_path, margin, fontsize, title, page_numbers_enabled, footer_file = sys.argv[1:10]
+config = {
+    "dest": output_path,
+    "basedir": os.path.dirname(os.path.abspath(input_path)),
+    "stylesheet": [css_path],
+    "document_title": title,
+    "pdf_options": {
+        "margin": {
+            "top": margin,
+            "right": margin,
+            "bottom": margin,
+            "left": margin,
+        },
+        "printBackground": True,
+        "path": output_path,
+    },
+}
+if page_numbers_enabled == "1":
+    config["pdf_options"]["displayHeaderFooter"] = True
+    config["pdf_options"]["footerTemplate"] = open(footer_file, encoding="utf-8").read()
+    config["pdf_options"]["headerTemplate"] = "<span></span>"
+with open(config_path, "w", encoding="utf-8") as fh:
+    json.dump(config, fh)
+PY
+
+  "$binary" "$input_file" --config-file "$config_json"
+  echo "$resolved_output"
+}
+
+render_mdpdf() {
+  local resolved_output tmpdir css_file footer_file binary title_value
+
+  binary="$(npm_mode_bin mdpdf mdpdf)"
+  [[ -x "$binary" ]] || fail "mdpdf is not installed. Run: $0 --mode mdpdf --install-deps"
+
+  resolved_output="$(resolve_output_file "$input_file")"
+  ensure_parent_dir "$resolved_output"
+  tmpdir="$(new_temp_dir)"
+  css_file="$tmpdir/mdpdf.css"
+  write_font_css "$css_file"
+  footer_file="$tmpdir/mdpdf-footer.html"
+  title_value="$(detect_title "$input_file")"
+  [[ "$page_numbers_enabled" == "1" ]] && write_puppeteer_footer_template "$footer_file"
+
+  local -a cmd
+  cmd=("$binary" "$input_file" "$resolved_output" --style "$css_file" --border "$margin" --title "$title_value")
+  if [[ "$page_numbers_enabled" == "1" ]]; then
+    cmd+=(--footer "$footer_file" --f-height 12mm)
+  fi
+
+  "${cmd[@]}"
+
+  echo "$resolved_output"
+}
+
+render_go_md2pdf() {
+  local resolved_output binary detected_title
+
+  binary="$(go_mode_bin)"
+  [[ -x "$binary" ]] || fail "go-md2pdf is not installed. Run: $0 --mode go-md2pdf --install-deps"
+
+  resolved_output="$(resolve_output_file "$input_file")"
+  ensure_parent_dir "$resolved_output"
+  detected_title="$(detect_title "$input_file")"
+
+  local -a cmd
+  cmd=("$binary" -i "$input_file" -o "$resolved_output" --title "$detected_title")
+  [[ -n "$author" ]] && cmd+=(--author "$author")
+  [[ "$toc_enabled" == "1" ]] && cmd+=(--generate-toc)
+  [[ "$page_numbers_enabled" == "1" ]] && cmd+=(--with-footer)
+
+  "${cmd[@]}"
+  echo "$resolved_output"
+}
+
+render_weasy_md2pdf() {
+  local resolved_output tmpdir css_file binary
+
+  binary="$(python_mode_bin)"
+  [[ -x "$binary" ]] || fail "weasy-md2pdf is not installed. Run: $0 --mode weasy-md2pdf --install-deps"
+
+  resolved_output="$(resolve_output_file "$input_file")"
+  ensure_parent_dir "$resolved_output"
+  tmpdir="$(new_temp_dir)"
+  css_file="$tmpdir/weasy.css"
+  write_weasy_css "$css_file"
+
+  "$binary" -i "$input_file" -o "$resolved_output" --css "$css_file"
+  echo "$resolved_output"
+}
+
+render_percollate() {
+  local resolved_output tmpdir html_file binary detected_title css_value
+
+  binary="$(npm_mode_bin percollate percollate)"
+  [[ -x "$binary" ]] || fail "percollate is not installed. Run: $0 --mode percollate --install-deps"
+  require_cmd pandoc "brew install pandoc"
+
+  resolved_output="$(resolve_output_file "$input_file")"
+  ensure_parent_dir "$resolved_output"
+  tmpdir="$(new_temp_dir)"
+  html_file="$tmpdir/input.html"
+  detected_title="$(detect_title "$input_file")"
+
+  pandoc -s "$input_file" -o "$html_file"
+
+  css_value="@page { margin: $margin; } html, body { font-size: $fontsize; font-family: \"$font_family\", serif; } :root { --main-font: \"$font_family\"; --alt-font: \"$font_family\"; }"
+  if [[ "$page_numbers_enabled" != "1" ]]; then
+    css_value="$css_value .footer-template { display: none; }"
+  fi
+
+  local -a cmd
+  cmd=("$binary" pdf "$html_file" -o "$resolved_output" --title "$detected_title" --css "$css_value")
+  [[ -n "$author" ]] && cmd+=(--author "$author")
+  if [[ "$toc_enabled" == "1" ]]; then
+    cmd+=(--toc)
+  else
+    cmd+=(--no-toc)
+  fi
+
+  "${cmd[@]}"
+  echo "$resolved_output"
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode)
+        [[ $# -ge 2 ]] || fail "--mode requires a value"
+        mode="$2"
+        shift 2
+        ;;
+      --mode=*)
+        mode="${1#*=}"
+        shift
+        ;;
+      --list-modes)
+        action="list-modes"
+        shift
+        ;;
+      --check-deps)
+        action="check-deps"
+        shift
+        ;;
+      --check-deps-all)
+        action="check-deps-all"
+        shift
+        ;;
+      --install-deps)
+        action="install-deps"
+        shift
+        ;;
+      --install-deps-all)
+        action="install-deps-all"
+        shift
+        ;;
+      --mode-help)
+        action="mode-help"
+        shift
+        ;;
+      -t)
+        [[ $# -ge 2 ]] || fail "-t requires a value"
+        title="$2"
+        shift 2
+        ;;
+      -a)
+        [[ $# -ge 2 ]] || fail "-a requires a value"
+        author="$2"
+        shift 2
+        ;;
+      --font)
+        [[ $# -ge 2 ]] || fail "--font requires a value"
+        font_family="$2"
+        font_explicit=1
+        shift 2
+        ;;
+      -m)
+        [[ $# -ge 2 ]] || fail "-m requires a value"
+        margin="$2"
+        shift 2
+        ;;
+      -s)
+        [[ $# -ge 2 ]] || fail "-s requires a value"
+        fontsize="$2"
+        shift 2
+        ;;
+      --no-toc)
+        toc_enabled=0
+        toc_explicit=1
+        shift
+        ;;
+      --page-numbers)
+        page_numbers_enabled=1
+        shift
+        ;;
+      --no-page-numbers)
+        page_numbers_enabled=0
+        shift
+        ;;
+      -h|--help)
+        usage 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        fail "Unknown option: $1"
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  if ! mode_exists "$mode"; then
+    fail "Unknown mode: $mode"
+  fi
+  mode="$(canonicalize_mode "$mode")"
+
+  if [[ $# -gt 0 ]]; then
+    input_file="$1"
+    shift
+  fi
+  if [[ $# -gt 0 ]]; then
+    output_file="$1"
+    shift
+  fi
+  if [[ $# -gt 0 ]]; then
+    fail "Unexpected extra arguments: $*"
+  fi
+}
+
+run_action() {
+  local selected_mode
+
+  case "$action" in
+    list-modes)
+      list_modes
+      ;;
+    check-deps)
+      if check_mode_deps "$mode"; then
+        echo "$mode dependencies OK"
+      else
+        exit 1
+      fi
+      ;;
+    check-deps-all)
+      local failed=0
+      for selected_mode in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate; do
+        if check_mode_deps "$selected_mode"; then
+          echo "$selected_mode dependencies OK"
+        else
+          failed=1
+        fi
+      done
+      [[ "$failed" -eq 0 ]]
+      ;;
+    install-deps)
+      install_mode_deps "$mode"
+      echo "$mode dependencies installed"
+      ;;
+    install-deps-all)
+      for selected_mode in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate; do
+        echo "Installing $selected_mode dependencies..." >&2
+        install_mode_deps "$selected_mode"
+      done
+      echo "all mode dependencies installed"
+      ;;
+    mode-help)
+      mode_help
+      ;;
+    render)
+      ensure_input_file
+      warn_unmapped_options "$mode"
+      flush_warnings
+      check_mode_deps "$mode" || fail "Dependencies missing for mode '$mode'. Run: $0 --mode $mode --install-deps"
+      case "$mode" in
+        pandoc-xelatex) render_pandoc_xelatex ;;
+        pandoc-lualatex) render_pandoc_lualatex ;;
+        pandoc-pdflatex) render_pandoc_pdflatex ;;
+        pandoc-wkhtmltopdf) render_pandoc_wkhtmltopdf ;;
+        pandoc-weasyprint) render_pandoc_weasyprint ;;
+        md-to-pdf) render_md_to_pdf ;;
+        mdpdf) render_mdpdf ;;
+        go-md2pdf) render_go_md2pdf ;;
+        weasy-md2pdf) render_weasy_md2pdf ;;
+        percollate) render_percollate ;;
+      esac
+      ;;
+    *)
+      fail "Unknown action: $action"
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  parse_args "$@"
+  run_action
+fi
