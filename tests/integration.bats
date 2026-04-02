@@ -67,6 +67,16 @@ has_pandoc_xelatex() {
   [ "$status" -ne 0 ]
 }
 
+@test "complex report with tables and bold/italic converts with pandoc-xelatex" {
+  has_pandoc_xelatex || skip "pandoc and xelatex not available"
+
+  local output_pdf="$TEST_TEMP_DIR/complex-report.pdf"
+  run "$MD2PDF" --no-toc "$FIXTURES_DIR/complex-report.md" "$output_pdf"
+  [ "$status" -eq 0 ]
+  [ -f "$output_pdf" ]
+  [ -s "$output_pdf" ]
+}
+
 @test "unicode file converts with pandoc-xelatex" {
   has_pandoc_xelatex || skip "pandoc and xelatex not available"
 

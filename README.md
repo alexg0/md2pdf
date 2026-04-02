@@ -140,6 +140,10 @@ bats tests/argument_parsing.bats
 
 Unit tests run without any rendering engine installed. Integration tests automatically skip when `pandoc` and `xelatex` are not available.
 
+## Author
+
+Alexander Goldstein <alexg@alexland.org>
+
 ## License
 
-MIT
+This project is licensed under the [GNU General Public License v3.0](LICENSE).

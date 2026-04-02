@@ -17,9 +17,3 @@ teardown() {
     rm -rf "$TEST_TEMP_DIR"
   fi
 }
-
-# Source md2pdf.sh to expose internal functions for unit testing.
-# The main guard prevents parse_args/run_action from executing.
-load_md2pdf_functions() {
-  source "$MD2PDF"
-}
