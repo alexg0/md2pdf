@@ -90,6 +90,65 @@ module RenderHelpers
     File.write(path, content)
     path
   end
+
+  def number_sections?(content)
+    !frontmatter_controls_numbering?(content) && !numbered_h2?(content)
+  end
+
+  def resolve_number_sections(content, override)
+    return override unless override.nil?
+
+    number_sections?(content)
+  end
+
+  def resolve_toc(content, override, default)
+    return override unless override.nil?
+
+    frontmatter_bool(content, "toc") { default }
+  end
+
+  def normalize_number_sections_frontmatter(content)
+    content.sub(/\A((?:\uFEFF)?---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\z))/m) do |frontmatter|
+      frontmatter.gsub(/^([ \t]*)number_sections([ \t]*:)/, "\\1numbersections\\2")
+    end
+  end
+
+  def frontmatter_bool(content, key)
+    body = frontmatter_body(content)
+    return yield unless body
+
+    body.each_line do |line|
+      next unless (match = line.match(/^[ \t]*#{Regexp.escape(key)}[ \t]*:[ \t]*(?<value>[^#\r\n]*)/))
+
+      value = match[:value].strip.downcase
+      return true if %w[true yes on 1].include?(value)
+      return false if %w[false no off 0].include?(value)
+    end
+
+    yield
+  end
+
+  def frontmatter_controls_numbering?(content)
+    body = frontmatter_body(content)
+    return false unless body
+
+    body.each_line.any? { |line| line.match?(/^[ \t]*(numbersections|number_section|number_sections)[ \t]*:/) }
+  end
+
+  def frontmatter_body(content)
+    content.match(/\A(?:\uFEFF)?---[ \t]*\r?\n(?<body>.*?)\r?\n---[ \t]*(?:\r?\n|\z)/m)&.[](:body)
+  end
+
+  def numbered_h2?(content)
+    in_fence = false
+
+    content.each_line.any? do |line|
+      in_fence = !in_fence if line.match?(/^[ \t]*(```|~~~)/)
+      next false if in_fence
+
+      line.match?(/^[ \t]*##(?!#)[ \t]+\d/) || line.match?(/^[ \t]*<h2(?:[ \t][^>]*)?>[ \t]*\d/i)
+    end
+  end
 end
 
 # --- Pandoc render builder ---
@@ -100,13 +159,18 @@ PANDOC_RENDER = ->(ctx) do
 
   # Preprocess: title block + unicode normalization
   content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  content << File.read(ctx[:input], encoding: "utf-8")
+  content << RenderHelpers.normalize_number_sections_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
   LATEX_UNICODE.each { |k, v| content.gsub!(k, v) }
   PDFLATEX_EXTRA.each { |k, v| content.gsub!(k, v) } if engine == "pdflatex"
   tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
 
-  cmd = %W[pandoc #{tmp_md} --number-sections --resource-path=#{ctx[:resource_path]}
+  cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]}
            --pdf-engine=#{engine} -V linkcolor:blue -V urlcolor:blue -o #{ctx[:output]}]
+  cmd << "--number-sections" if ctx[:number_sections]
+  cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
+  cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
+  cmd << "--metadata=toc:true" if ctx[:toc_override] == true
+  cmd << "--metadata=toc:false" if ctx[:toc_override] == false
 
   case engine
   when "xelatex", "lualatex"
@@ -318,7 +382,8 @@ class Md2Pdf
     @font_family = DEFAULTS[:font_family]
     @margin = DEFAULTS[:margin]
     @fontsize = DEFAULTS[:fontsize]
-    @toc = DEFAULTS[:toc]
+    @toc = nil
+    @number_sections = nil
     @page_numbers = DEFAULTS[:page_numbers]
     @font_explicit = false
     @title = nil
@@ -356,7 +421,8 @@ class Md2Pdf
       opts.on("--font FONT", "Body font") { |v| @font_family = v; @font_explicit = true }
       opts.on("-m MARGIN", "Page margin (default: #{DEFAULTS[:margin]})") { |v| @margin = v }
       opts.on("-s SIZE", "Font size (default: #{DEFAULTS[:fontsize]})") { |v| @fontsize = v }
-      opts.on("--[no-]toc", "Table of contents (default: on)") { |v| @toc = v }
+      opts.on("--[no-]toc", "Table of contents (default: on unless frontmatter sets toc)") { |v| @toc = v }
+      opts.on("--[no-]number-sections", "Number section headings (default: on unless frontmatter or numbered H2 controls it)") { |v| @number_sections = v }
       opts.on("--[no-]page-numbers", "Page numbers (default: on)") { |v| @page_numbers = v }
       opts.on("--list-modes", "List modes and install status") { @action = :list_modes }
       opts.on("--check-deps", "Check deps for selected mode") { @action = :check_deps }
@@ -433,13 +499,18 @@ class Md2Pdf
     resolved = resolve_output
     FileUtils.mkdir_p(File.dirname(resolved))
     tmpdir = new_temp_dir
+    source_content = File.read(@input_file, encoding: "utf-8")
 
     ctx = {
       binary: binary, input: @input_file, output: resolved, tmpdir: tmpdir,
       title: detect_title, author: @author, date: latex_date,
       margin: @margin, fontsize: @fontsize, font: @font_family,
-      toc: @toc, page_numbers: @page_numbers,
+      toc: RenderHelpers.resolve_toc(source_content, @toc, DEFAULTS[:toc]),
+      toc_override: @toc,
+      page_numbers: @page_numbers,
       engine: cfg[:engine],
+      number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
+      number_sections_override: @number_sections,
       resource_path: "#{File.dirname(File.expand_path(@input_file))}:.:#{@script_dir}",
     }
 
@@ -511,7 +582,7 @@ class Md2Pdf
     @warnings << "mode #{@mode} ignores -m/--margin" if @margin != DEFAULTS[:margin] && !supports.include?(:margin)
     @warnings << "mode #{@mode} ignores -s/--size" if @fontsize != DEFAULTS[:fontsize] && !supports.include?(:fontsize)
     @warnings << "mode #{@mode} does not support arbitrary system font selection" if @font_explicit && !supports.include?(:font)
-    @warnings << "mode #{@mode} does not support auto-generated TOC" if @toc != DEFAULTS[:toc] && !supports.include?(:toc)
+    @warnings << "mode #{@mode} does not support auto-generated TOC" if !@toc.nil? && @toc != DEFAULTS[:toc] && !supports.include?(:toc)
   end
 
   def flush_warnings
