@@ -83,7 +83,11 @@ Common options:
   -s SIZE             Font size (default: 11pt)
   --page-numbers      Show page numbers where supported (default: on)
   --no-page-numbers   Hide page numbers where supported
+  --toc               Generate table of contents where supported
   --no-toc            Omit table of contents where supported
+  --number-sections   Number section headings
+  --no-number-sections
+                      Do not number section headings
 
 Actions:
   --list-modes        List modes and install status
@@ -109,12 +113,28 @@ md2pdf --mode pandoc-lualatex README.md
 # Custom title, author, and formatting
 md2pdf -t "My Report" -a "Jane Doe" -m "0.5in" -s "12pt" report.md
 
+# Override frontmatter-controlled generated structure
+md2pdf --toc --no-number-sections report.md
+
 # List all modes and their install status
 md2pdf --list-modes
 
 # Check if dependencies are met
 md2pdf --mode go-md2pdf --check-deps
 ```
+
+Pandoc modes also honor YAML frontmatter for table-of-contents and section
+numbering control:
+
+```yaml
+---
+toc: false
+numbersections: false
+---
+```
+
+`number_sections:` is accepted by `md2pdf` and normalized to pandoc's
+`numbersections:` metadata key before rendering.
 
 ## Configuration
 
