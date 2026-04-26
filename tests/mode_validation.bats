@@ -57,6 +57,30 @@ load test_helper
   [ "$status" -eq 0 ]
 }
 
+@test "valid mode accepted: pandoc-docx" {
+  run "$MD2PDF" --mode pandoc-docx --mode-help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DOCX"* ]]
+}
+
+@test "docx alias resolves to pandoc-docx" {
+  run "$MD2PDF" --mode docx --mode-help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DOCX"* ]]
+}
+
+@test "word alias resolves to pandoc-docx" {
+  run "$MD2PDF" --mode word --mode-help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DOCX"* ]]
+}
+
+@test "alias_tag for pandoc-docx shown in --list-modes" {
+  run "$MD2PDF" --list-modes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[aliases: docx, word]"* ]]
+}
+
 @test "invalid mode rejected" {
   run "$MD2PDF" --mode not-a-mode --mode-help
   [ "$status" -ne 0 ]
@@ -88,6 +112,7 @@ load test_helper
   [[ "$output" == *"Go/fpdf"* ]]
   [[ "$output" == *"Python/WeasyPrint"* ]]
   [[ "$output" == *"Experimental HTML-first"* ]]
+  [[ "$output" == *"Pandoc -> DOCX"* ]]
 }
 
 @test "mode_runtime shown in --list-modes" {
@@ -103,7 +128,7 @@ load test_helper
 }
 
 @test "mode_note is non-empty for all modes" {
-  for m in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate; do
+  for m in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate pandoc-docx; do
     run "$MD2PDF" --mode "$m" --mode-help
     [ "$status" -eq 0 ]
     [ -n "$output" ]

@@ -13,6 +13,7 @@ load test_helper
   [[ "$output" == *"go-md2pdf"* ]]
   [[ "$output" == *"weasy-md2pdf"* ]]
   [[ "$output" == *"percollate"* ]]
+  [[ "$output" == *"pandoc-docx"* ]]
 }
 
 @test "--list-modes shows status for each mode" {
@@ -28,7 +29,7 @@ load test_helper
 }
 
 @test "--mode-help shows info for each mode" {
-  for m in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate; do
+  for m in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate pandoc-docx; do
     run "$MD2PDF" --mode "$m" --mode-help
     [ "$status" -eq 0 ]
     [ -n "$output" ]
