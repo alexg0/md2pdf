@@ -1,0 +1,77 @@
+name: Release (update Homebrew tap)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  update-tap:
+    name: Open PR against alexg0/homebrew-tap
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout md2pdf at the tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute release metadata
+        id: meta
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          tarball_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${tag}.tar.gz"
+          curl -fsSL -o release.tar.gz "$tarball_url"
+          sha256="$(shasum -a 256 release.tar.gz | awk '{print $1}')"
+          echo "tag=$tag"             >> "$GITHUB_OUTPUT"
+          echo "version=$version"     >> "$GITHUB_OUTPUT"
+          echo "tarball_url=$tarball_url" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256"       >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: alexg0/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        env:
+          VERSION:     ${{ steps.meta.outputs.version }}
+          TARBALL_URL: ${{ steps.meta.outputs.tarball_url }}
+          SHA256:      ${{ steps.meta.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          formula="homebrew-tap/Formula/md2pdf.rb"
+          if [ ! -f "$formula" ]; then
+            echo "::error::$formula not found in tap repo. Seed it from packaging/homebrew/md2pdf.rb first."
+            exit 1
+          fi
+          python3 - "$formula" "$VERSION" "$TARBALL_URL" "$SHA256" <<'PY'
+          import re, sys, pathlib
+          path, version, url, sha = sys.argv[1:]
+          p = pathlib.Path(path)
+          text = p.read_text()
+          text = re.sub(r'^(\s*url\s+)"[^"]*"',     rf'\1"{url}"',     text, count=1, flags=re.M)
+          text = re.sub(r'^(\s*sha256\s+)"[^"]*"',  rf'\1"{sha}"',     text, count=1, flags=re.M)
+          text = re.sub(r'^(\s*version\s+)"[^"]*"', rf'\1"{version}"', text, count=1, flags=re.M)
+          p.write_text(text)
+          PY
+          (cd homebrew-tap && git --no-pager diff -- Formula/md2pdf.rb)
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          branch: md2pdf-${{ steps.meta.outputs.version }}
+          commit-message: "md2pdf ${{ steps.meta.outputs.version }}"
+          title: "md2pdf ${{ steps.meta.outputs.version }}"
+          body: |
+            Automated formula update for [md2pdf ${{ steps.meta.outputs.tag }}](https://github.com/${{ github.repository }}/releases/tag/${{ steps.meta.outputs.tag }}).
+
+            - url: ${{ steps.meta.outputs.tarball_url }}
+            - sha256: `${{ steps.meta.outputs.sha256 }}`

@@ -182,3 +182,50 @@
   - `bats tests/` — 143 tests passed after rebase.
   - `git diff --check origin/master...HEAD` — passed.
 - Lessons: no new correction; these regressions were covered before fixing as requested.
+
+## AG-7: Distribute via Homebrew tap
+
+- [x] Restate goal + acceptance criteria
+  - Goal: `brew install alexg0/tap/md2pdf` installs a working `md2pdf` from a tagged release; future releases automated via tag-push.
+  - Acceptance:
+    - `md2pdf --version` reports the tag (e.g. `0.1.0`).
+    - `Formula/md2pdf.rb` template exists in this repo as the seed for `alexg0/homebrew-tap`.
+    - `make release-tag VERSION=X.Y.Z` bumps `VERSION`, rewrites the baked constant, commits, creates annotated tag.
+    - On tag push, GitHub Action computes tarball sha256 and opens a PR against `alexg0/homebrew-tap` updating url/sha256/version.
+    - README installation section leads with `brew tap` / `brew install`; `make install` retained as "Install from source".
+- [x] Locate existing implementation / patterns
+  - `bin/md2pdf` uses `OptionParser`; options defined around line 416.
+  - `Makefile` uses `.PHONY` targets with `## help` comments.
+  - No `.github/workflows/` exists yet.
+- [x] Design: minimal approach + key decisions
+  - Bake `MD2PDF_VERSION` constant in `bin/md2pdf` (no extra install file needed for Homebrew).
+  - Keep a `VERSION` file for human/CI consumption; `release-tag` updates both via `sed`.
+  - Reference formula at `packaging/homebrew/md2pdf.rb` (not auto-installed; just a seed for the tap).
+  - GitHub Action uses `peter-evans/create-pull-request` against `alexg0/homebrew-tap` with `HOMEBREW_TAP_TOKEN` PAT.
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests (smoke `--version`)
+- [x] Run verification (`ruby -c`, `--version`, `make test` if bats present)
+- [x] Summarize changes + verification story
+
+## AG-7 Results
+
+- `VERSION` file created at `0.1.0`.
+- `MD2PDF_VERSION = "0.1.0"` baked in `bin/md2pdf`; `--version` prints it and exits 0.
+- `Makefile` gains `release-tag` target: validates VERSION, requires clean tree, checks tag absence, rewrites `VERSION` and the constant via `sed`, commits, creates annotated `vX.Y.Z` tag.
+- `README.md` Installation now leads with `brew install alexg0/tap/md2pdf`; `make install` retained as "Install from source"; new "Releasing" section documents the tap bootstrap and PAT requirement.
+- `.github/workflows/release.yml` triggers on `v*.*.*` tag push: downloads release tarball, computes sha256, rewrites `Formula/md2pdf.rb` (url/sha256/version) in the tap checkout, opens PR via `peter-evans/create-pull-request@v6` using `HOMEBREW_TAP_TOKEN`.
+- `packaging/homebrew/md2pdf.rb` is the seed formula for `alexg0/homebrew-tap` (depends on `pandoc`, suggests TeX + font casks in `caveats`, has a `--version` / `--help` smoke test).
+- Verification:
+  - `ruby -c bin/md2pdf` passed.
+  - `bin/md2pdf --version` prints `0.1.0`, exit 0.
+  - `bin/md2pdf --help` lists `--version`, exit 0.
+  - `ruby -c packaging/homebrew/md2pdf.rb` passed.
+  - `ruby -ryaml -e YAML.load_file(workflow)` passed.
+  - Sed pattern dry-run rewrote `MD2PDF_VERSION = "0.1.0"` to `"9.9.9"` cleanly.
+  - `make test` passed (89 tests, all `ok`).
+
+### AG-7 Working Notes
+
+- One-time prerequisite: create `alexg0/homebrew-tap` repo, drop `packaging/homebrew/md2pdf.rb` in as `Formula/md2pdf.rb` with the real sha256 from the first tarball, and add `HOMEBREW_TAP_TOKEN` PAT secret to this repo. (Done during this branch: tap repo created, formula seeded with placeholder sha256 that the release workflow will overwrite, secret set using the gh CLI token.)
+- Tarball URL pattern: `https://github.com/alexg0/md2pdf/archive/refs/tags/vX.Y.Z.tar.gz`.
+- Future releases: `make release-tag VERSION=X.Y.Z && git push origin master vX.Y.Z`.
