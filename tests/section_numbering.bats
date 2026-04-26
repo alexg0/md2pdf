@@ -91,6 +91,18 @@ assert_arg_absent() {
   ! grep -qx -- "number_sections: true" "$MD2PDF_PANDOC_INPUT_LOG"
 }
 
+@test "nested frontmatter numbersections does not disable automatic section numbering" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/nested-numbersections.md"
+  write_doc "$input" "---" "project:" "  numbersections: false" "---" "" "# Title" "" "## Introduction"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  assert_arg_present "--number-sections"
+  grep -qx -- "  numbersections: false" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
 @test "--no-number-sections disables default automatic section numbering" {
   setup_fake_pandoc
   local input="$TEST_TEMP_DIR/no-number-sections.md"

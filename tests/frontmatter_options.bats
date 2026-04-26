@@ -10,6 +10,11 @@ setup_fake_pandoc() {
 exit 0
 SH
 
+  cat > "$TEST_TEMP_DIR/fake-bin/pdflatex" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+
   cat > "$TEST_TEMP_DIR/fake-bin/pandoc" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$MD2PDF_PANDOC_ARGS_LOG"
@@ -25,7 +30,7 @@ done
 exit 0
 SH
 
-  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex"
+  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex" "$TEST_TEMP_DIR/fake-bin/pdflatex"
   export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
   export MD2PDF_PANDOC_ARGS_LOG="$TEST_TEMP_DIR/pandoc-args.txt"
   export MD2PDF_PANDOC_INPUT_LOG="$TEST_TEMP_DIR/pandoc-input.md"
@@ -243,4 +248,40 @@ write_doc() {
 
   [ "$status" -eq 0 ]
   grep -q "^% Quoted Title$" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+@test "quoted frontmatter values may contain hash characters" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-quoted-hash.md"
+  write_doc "$input" "---" 'title: "C# Guide"' "---" "" "# H1 Heading" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  grep -q "^% C# Guide$" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q '^% "C$' "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+@test "nested frontmatter keys are not treated as md2pdf options" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-nested.md"
+  write_doc "$input" "---" "project:" "  title: Nested Title" "---" "" "# H1 Heading" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  grep -q "^% H1 Heading$" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "^% Nested Title$" "$MD2PDF_PANDOC_INPUT_LOG"
+  grep -qx -- "  title: Nested Title" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+@test "frontmatter options unsupported by selected mode emit warnings" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-unsupported-font.md"
+  write_doc "$input" "---" "font: Helvetica" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" --mode pandoc-pdflatex "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: mode pandoc-pdflatex does not support arbitrary system font selection"* ]]
 }
