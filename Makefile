@@ -1,9 +1,11 @@
 PREFIX ?= /usr/local
 BIN_DIR := $(PREFIX)/bin
+DEV_PREFIX ?= $(HOME)/.local
+DEV_BIN_DIR := $(DEV_PREFIX)/bin
 SRC_BIN := $(shell pwd)/bin/md2pdf
 VERSION_FILE := $(shell pwd)/VERSION
 
-.PHONY: install install-link uninstall test check-deps install-prereqs release-tag help
+.PHONY: install install-link install-dev uninstall uninstall-dev test check-deps install-prereqs release-tag help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
@@ -19,9 +21,29 @@ install-link: ## Install md2pdf to PREFIX/bin (symlink)
 	@ln -sf "$(SRC_BIN)" "$(BIN_DIR)/md2pdf"
 	@echo "Installed: $(BIN_DIR)/md2pdf -> $(SRC_BIN)"
 
+install-dev: ## Symlink dev build into DEV_PREFIX/bin (default ~/.local/bin) to shadow Homebrew
+	@mkdir -p "$(DEV_BIN_DIR)"
+	@ln -sf "$(SRC_BIN)" "$(DEV_BIN_DIR)/md2pdf"
+	@echo "Installed: $(DEV_BIN_DIR)/md2pdf -> $(SRC_BIN)"
+	@case ":$$PATH:" in \
+		*":$(DEV_BIN_DIR):"*) \
+			active="$$(command -v md2pdf)"; \
+			if [ "$$active" = "$(DEV_BIN_DIR)/md2pdf" ]; then \
+				echo "Active: $$active (dev shim wins)"; \
+			else \
+				echo "Warning: $$active is earlier in PATH than $(DEV_BIN_DIR); dev shim is shadowed."; \
+			fi ;; \
+		*) \
+			echo "Warning: $(DEV_BIN_DIR) is not in PATH; add it to your shell rc to activate the dev shim." ;; \
+	esac
+
 uninstall: ## Remove md2pdf from PREFIX/bin
 	@rm -f "$(BIN_DIR)/md2pdf"
 	@echo "Removed: $(BIN_DIR)/md2pdf"
+
+uninstall-dev: ## Remove dev shim from DEV_PREFIX/bin
+	@rm -f "$(DEV_BIN_DIR)/md2pdf"
+	@echo "Removed: $(DEV_BIN_DIR)/md2pdf"
 
 test: ## Run test suite (requires bats-core)
 	@command -v bats >/dev/null 2>&1 || { echo "bats-core is required: run 'make install-prereqs' or 'brew install bats-core'"; exit 1; }
