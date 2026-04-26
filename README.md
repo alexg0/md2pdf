@@ -31,13 +31,29 @@ Multi-engine Markdown to PDF converter. Supports 10 rendering backends with a un
 
 ## Installation
 
+### Homebrew (recommended)
+
 ```bash
-git clone <repo-url> ~/work/dev/md2pdf
-cd ~/work/dev/md2pdf
+brew install alexg0/tap/md2pdf
+```
+
+This installs `md2pdf` and `pandoc` (the default rendering backend's main dependency).
+For the default `pandoc-xelatex` mode you also need a TeX distribution and a body font:
+
+```bash
+brew install --cask basictex
+brew install --cask font-noto-serif
+```
+
+### Install from source
+
+```bash
+git clone https://github.com/alexg0/md2pdf
+cd md2pdf
 make install
 ```
 
-This creates a symlink at `/usr/local/bin/md2pdf`. To install elsewhere:
+This copies `md2pdf` to `/usr/local/bin`. Override the prefix:
 
 ```bash
 make install PREFIX=~/.local
@@ -60,14 +76,6 @@ md2pdf --mode md-to-pdf --install-deps
 
 # Install all mode dependencies
 md2pdf --install-deps-all
-```
-
-### macOS quick start (default mode)
-
-```bash
-brew install pandoc
-brew install --cask basictex
-brew install --cask font-noto-serif
 ```
 
 ## Usage
@@ -237,6 +245,24 @@ bats tests/argument_parsing.bats
 ```
 
 Unit tests run without any rendering engine installed. Integration tests automatically skip when `pandoc` and `xelatex` are not available.
+
+## Releasing
+
+```bash
+make release-tag VERSION=0.2.0
+git push origin master && git push origin v0.2.0
+```
+
+`release-tag` writes the new version to `VERSION` and to the `MD2PDF_VERSION`
+constant in `bin/md2pdf`, commits, and creates an annotated tag. Pushing the tag
+triggers `.github/workflows/release.yml`, which computes the release tarball's
+sha256 and opens a PR against [`alexg0/homebrew-tap`](https://github.com/alexg0/homebrew-tap)
+updating `Formula/md2pdf.rb`.
+
+Prerequisite (one-time): create the `alexg0/homebrew-tap` repo, seed it with
+[`packaging/homebrew/md2pdf.rb`](packaging/homebrew/md2pdf.rb), and add a
+`HOMEBREW_TAP_TOKEN` secret to this repo (PAT with `contents:write` and
+`pull-requests:write` on the tap).
 
 ## Author
 

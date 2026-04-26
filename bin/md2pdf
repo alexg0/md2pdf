@@ -48,6 +48,8 @@ require "yaml"
 # and returns an array of command arrays to execute in order.
 # ---------------------------------------------------------------------------
 
+MD2PDF_VERSION = "0.1.0"
+
 DEFAULTS = {
   font_family: "Noto Serif",
   font_cask: "font-noto-serif",
@@ -605,6 +607,7 @@ class Md2Pdf
       opts.on("--install-deps", "Install deps for selected mode") { @action = :install_deps }
       opts.on("--install-deps-all", "Install deps for all modes") { @action = :install_deps_all }
       opts.on("--mode-help", "Show notes for selected mode") { @action = :mode_help }
+      opts.on("--version", "Print version and exit") { puts MD2PDF_VERSION; exit 0 }
     end
 
     remaining = parser.parse(args)
