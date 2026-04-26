@@ -63,6 +63,7 @@ jobs:
           (cd homebrew-tap && git --no-pager diff -- Formula/md2pdf.rb)
 
       - name: Open pull request
+        id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
           path: homebrew-tap
@@ -75,3 +76,12 @@ jobs:
 
             - url: ${{ steps.meta.outputs.tarball_url }}
             - sha256: `${{ steps.meta.outputs.sha256 }}`
+
+      - name: Squash-merge the formula bump
+        if: steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh pr merge "${{ steps.cpr.outputs.pull-request-number }}" \
+            --repo alexg0/homebrew-tap \
+            --squash --delete-branch
