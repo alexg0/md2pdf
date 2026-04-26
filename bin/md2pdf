@@ -26,6 +26,7 @@
 #   ./bin/md2pdf --mode go-md2pdf --check-deps
 #   ./bin/md2pdf --install-deps-all
 
+require "digest"
 require "fileutils"
 require "json"
 require "optparse"
@@ -54,6 +55,97 @@ DEFAULTS = {
   page_numbers: true,
   mode: "pandoc-xelatex",
 }.freeze
+
+MERMAID_NPM_PACKAGE = "@mermaid-js/mermaid-cli"
+MERMAID_BIN = "mmdc"
+
+# --- Mermaid preprocessor ---
+#
+# Detects fenced ```mermaid blocks (ignoring fences nested inside other code
+# blocks), renders each block to a cached PNG via mmdc, and rewrites the source
+# to reference the PNG.
+module MermaidPreprocessor
+  module_function
+
+  FENCE_OPEN_RE = /\A([ \t]*)(```+|~~~+)([^\n]*)\r?\n?\z/.freeze
+
+  def closing_fence?(line, fence_indent:, fence_delim:)
+    fence_char = fence_delim[0]
+    line.match?(/\A(?:#{Regexp.escape(fence_indent)}|[ \t]{0,3})#{Regexp.escape(fence_char)}{#{fence_delim.length},}[ \t]*\r?\n?\z/)
+  end
+
+  def detect_blocks(content)
+    blocks = []
+    in_fence = false
+    fence_lang = nil
+    fence_delim = nil
+    fence_indent = nil
+    block_open_start = nil
+    block_body_start = nil
+    pos = 0
+
+    content.each_line do |line|
+      line_start = pos
+      line_end = pos + line.length
+
+      if in_fence
+        if closing_fence?(line, fence_indent: fence_indent, fence_delim: fence_delim)
+          if fence_lang == "mermaid"
+            blocks << {
+              open_start: block_open_start,
+              block_end: line_end,
+              body: content[block_body_start...line_start],
+              indent: fence_indent,
+            }
+          end
+          in_fence = false
+        end
+      elsif (m = line.match(FENCE_OPEN_RE))
+        in_fence = true
+        fence_indent = m[1]
+        fence_delim = m[2]
+        fence_lang = m[3].strip.split(/\s+/).first.to_s.downcase
+        block_open_start = line_start
+        block_body_start = line_end
+      end
+
+      pos = line_end
+    end
+
+    blocks
+  end
+
+  def has_blocks?(content)
+    !detect_blocks(content).empty?
+  end
+
+  def process(content, cache_dir:, mmdc:, puppeteer_config:, tmpdir:)
+    blocks = detect_blocks(content)
+    return content if blocks.empty?
+
+    FileUtils.mkdir_p(cache_dir)
+    result = +""
+    cursor = 0
+
+    blocks.each_with_index do |block, idx|
+      result << content[cursor...block[:open_start]]
+      hash = Digest::SHA256.hexdigest(block[:body])[0, 12]
+      png = File.join(cache_dir, "mermaid-#{hash}.png")
+      unless File.exist?(png)
+        mmd = File.join(tmpdir, "mermaid-#{idx}-#{hash}.mmd")
+        File.write(mmd, block[:body])
+        cmd = [mmdc, "-i", mmd, "-o", png,
+               "--backgroundColor", "white", "--scale", "2", "--quiet"]
+        cmd += ["-p", puppeteer_config] if puppeteer_config
+        system(*cmd, exception: true)
+      end
+      result << "#{block[:indent]}![](#{png})\n"
+      cursor = block[:block_end]
+    end
+    result << content[cursor..]
+    result
+  end
+end
 
 LATEX_UNICODE = { "✅" => "[OK]", "⚠️" => "[!]", "✓" => "[x]", "≥" => ">=", "→" => "->" }.freeze
 PDFLATEX_EXTRA = { "—" => "--", "–" => "-", "'" => "'", "\u201c" => '"', "\u201d" => '"' }.freeze
@@ -202,7 +294,7 @@ MD_TO_PDF_RENDER = ->(ctx) do
 
   config = {
     dest: ctx[:output],
-    basedir: File.dirname(File.expand_path(ctx[:input])),
+    basedir: ctx[:source_dir],
     stylesheet: [css_file],
     document_title: ctx[:title],
     pdf_options: {
@@ -279,7 +371,7 @@ MODES = {
     label: "Pandoc + XeLaTeX", runtime: "pandoc, xelatex", alias_tag: " [alias: latex]",
     note: "Default mode. Pandoc + XeLaTeX with title block, margin/font/TOC support. 'latex' is an alias.",
     engine: "xelatex", font_check: true,
-    supports: %i[title author margin fontsize font toc page_numbers],
+    supports: %i[title author margin fontsize font toc page_numbers mermaid],
     deps: { cmds: %w[pandoc xelatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif] },
     binary: { system: "pandoc" },
@@ -289,7 +381,7 @@ MODES = {
     label: "Pandoc + LuaLaTeX", runtime: "pandoc, lualatex",
     note: "Pandoc + LuaLaTeX. Unicode font support like XeLaTeX, useful for comparing TeX engines.",
     engine: "lualatex", font_check: true,
-    supports: %i[title author margin fontsize font toc page_numbers],
+    supports: %i[title author margin fontsize font toc page_numbers mermaid],
     deps: { cmds: %w[pandoc lualatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif] },
     binary: { system: "pandoc" },
@@ -299,7 +391,7 @@ MODES = {
     label: "Pandoc + pdfLaTeX", runtime: "pandoc, pdflatex",
     note: "Pandoc + pdfLaTeX. Best with ASCII content; Unicode and custom fonts are limited.",
     engine: "pdflatex",
-    supports: %i[title author margin fontsize toc page_numbers],
+    supports: %i[title author margin fontsize toc page_numbers mermaid],
     deps: { cmds: %w[pandoc pdflatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex] },
     binary: { system: "pandoc" },
@@ -309,7 +401,7 @@ MODES = {
     label: "Pandoc + wkhtmltopdf", runtime: "pandoc, wkhtmltopdf",
     note: "Pandoc HTML pipeline + wkhtmltopdf. Margin/font via CSS. Author metadata not mapped.",
     engine: "wkhtmltopdf",
-    supports: %i[title margin fontsize font toc page_numbers],
+    supports: %i[title margin fontsize font toc page_numbers mermaid],
     deps: { cmds: %w[pandoc wkhtmltopdf] },
     install: { require: { "pandoc" => "brew install pandoc", "wkhtmltopdf" => "install via your preferred package manager" } },
     binary: { system: "pandoc" },
@@ -319,7 +411,7 @@ MODES = {
     label: "Pandoc + WeasyPrint", runtime: "pandoc, weasyprint",
     note: "Pandoc HTML pipeline + WeasyPrint. Margin/font via CSS. Author metadata not mapped.",
     engine: "weasyprint",
-    supports: %i[title margin fontsize font toc page_numbers],
+    supports: %i[title margin fontsize font toc page_numbers mermaid],
     deps: { cmds: %w[pandoc weasyprint] },
     install: { brew: %w[pandoc weasyprint] },
     binary: { system: "pandoc" },
@@ -328,7 +420,7 @@ MODES = {
   "md-to-pdf" => {
     label: "Node/Puppeteer (md-to-pdf)", runtime: "node, npm",
     note: "Puppeteer-based. Supports title, margin, font-size. Author/auto-TOC not mapped.",
-    supports: %i[title margin fontsize font page_numbers],
+    supports: %i[title margin fontsize font page_numbers mermaid],
     deps: { cmds: %w[node], npm_bin: { package: "md-to-pdf", binary: "md-to-pdf" } },
     install: { npm: "md-to-pdf" },
     binary: { npm: { package: "md-to-pdf", bin: "md-to-pdf" } },
@@ -337,7 +429,7 @@ MODES = {
   "mdpdf" => {
     label: "Node/Puppeteer (mdpdf)", runtime: "node, npm",
     note: "Puppeteer-based. Maps title, border, font-size via stylesheet. Author/auto-TOC not mapped.",
-    supports: %i[title margin fontsize font page_numbers],
+    supports: %i[title margin fontsize font page_numbers mermaid],
     deps: { cmds: %w[node], npm_bin: { package: "mdpdf", binary: "mdpdf" } },
     install: { npm: "mdpdf" },
     binary: { npm: { package: "mdpdf", bin: "mdpdf" } },
@@ -346,7 +438,7 @@ MODES = {
   "go-md2pdf" => {
     label: "Go/fpdf", runtime: "go",
     note: "Non-browser renderer. Title/author/TOC supported. No CSS margin/font-size control.",
-    supports: %i[title author toc page_numbers],
+    supports: %i[title author toc page_numbers mermaid],
     deps: { cmds: %w[go], local_bin: "go-md2pdf/bin/md2pdf" },
     install: { go: "github.com/solworktech/md2pdf/v2/cmd/md2pdf@latest" },
     binary: { local: "go-md2pdf/bin/md2pdf" },
@@ -355,7 +447,7 @@ MODES = {
   "weasy-md2pdf" => {
     label: "Python/WeasyPrint", runtime: "python3, brew",
     note: "Python + WeasyPrint. Margin/font via stylesheet. Title/author/TOC not mapped.",
-    supports: %i[margin fontsize font page_numbers],
+    supports: %i[margin fontsize font page_numbers mermaid],
     deps: { cmds: %w[python3 weasyprint], local_bin: "python/weasy-md2pdf/bin/md2pdf" },
     install: { weasy: true },
     binary: { local: "python/weasy-md2pdf/bin/md2pdf" },
@@ -364,7 +456,7 @@ MODES = {
   "percollate" => {
     label: "Experimental HTML-first", runtime: "pandoc, node, npm", extra_tag: " [experimental]",
     note: "Experimental. Converts MD to HTML via pandoc, then renders through percollate.",
-    supports: %i[title author margin fontsize font toc page_numbers],
+    supports: %i[title author margin fontsize font toc page_numbers mermaid],
     deps: { cmds: %w[pandoc node], npm_bin: { package: "percollate", binary: "percollate" } },
     install: { npm: "percollate" },
     binary: { npm: { package: "percollate", bin: "percollate" } },
@@ -385,6 +477,7 @@ class Md2Pdf
     @toc = nil
     @number_sections = nil
     @page_numbers = DEFAULTS[:page_numbers]
+    @mermaid = true
     @font_explicit = false
     @title = nil
     @author = nil
@@ -424,6 +517,7 @@ class Md2Pdf
       opts.on("--[no-]toc", "Table of contents (default: on unless frontmatter sets toc)") { |v| @toc = v }
       opts.on("--[no-]number-sections", "Number section headings (default: on unless frontmatter or numbered H2 controls it)") { |v| @number_sections = v }
       opts.on("--[no-]page-numbers", "Page numbers (default: on)") { |v| @page_numbers = v }
+      opts.on("--[no-]mermaid", "Pre-render fenced ```mermaid blocks via mmdc (default: on)") { |v| @mermaid = v }
       opts.on("--list-modes", "List modes and install status") { @action = :list_modes }
       opts.on("--check-deps", "Check deps for selected mode") { @action = :check_deps }
       opts.on("--check-deps-all", "Check deps for all modes") { @action = :check_deps_all }
@@ -460,8 +554,9 @@ class Md2Pdf
   def list_modes
     MODES.each do |name, info|
       status = check_mode_deps(name) ? "installed" : "missing deps"
+      features = info[:supports].include?(:mermaid) ? " features=mermaid" : ""
       extra = info[:alias_tag] || info[:extra_tag] || ""
-      printf "%-20s %-28s runtime=%-20s status=%s%s\n", name, info[:label], info[:runtime], status, extra
+      printf "%-20s %-28s runtime=%-20s status=%s%s%s\n", name, info[:label], info[:runtime], status, features, extra
     end
   end
 
@@ -500,9 +595,11 @@ class Md2Pdf
     FileUtils.mkdir_p(File.dirname(resolved))
     tmpdir = new_temp_dir
     source_content = File.read(@input_file, encoding: "utf-8")
+    input_path = preprocess_mermaid(source_content, tmpdir) || @input_file
 
     ctx = {
-      binary: binary, input: @input_file, output: resolved, tmpdir: tmpdir,
+      binary: binary, input: input_path, output: resolved, tmpdir: tmpdir,
+      source_dir: File.dirname(File.expand_path(@input_file)),
       title: detect_title, author: @author, date: latex_date,
       margin: @margin, fontsize: @fontsize, font: @font_family,
       toc: RenderHelpers.resolve_toc(source_content, @toc, DEFAULTS[:toc]),
@@ -571,6 +668,7 @@ class Md2Pdf
       run_cmd({ "GOBIN" => bin_dir }, "go", "install", recipe[:go])
     end
     ensure_weasy_env if recipe[:weasy]
+    ensure_npm_package(MERMAID_NPM_PACKAGE) if MODES.fetch(name)[:supports].include?(:mermaid)
   end
 
   # --- Config-driven unmapped option warnings ---
@@ -668,8 +766,41 @@ class Md2Pdf
     dir = File.join(@tool_home, "npm", package)
     FileUtils.mkdir_p(dir)
     pkg_json = File.join(dir, "package.json")
-    File.write(pkg_json, JSON.generate({ name: "md2pdf-rb-#{package}", private: true })) unless File.exist?(pkg_json)
+    unless File.exist?(pkg_json)
+      sanitized = "md2pdf-rb-#{package.gsub(/[^a-z0-9-]/i, "-").downcase}".gsub(/-+/, "-")
+      File.write(pkg_json, JSON.generate({ name: sanitized, private: true }))
+    end
     run_cmd("npm", "install", "--no-save", package, chdir: dir)
+  end
+
+  def preprocess_mermaid(content, tmpdir)
+    return nil unless @mermaid
+    return nil unless cfg[:supports].include?(:mermaid)
+    return nil unless MermaidPreprocessor.has_blocks?(content)
+
+    mmdc = locate_mmdc
+    unless mmdc
+      abort "mermaid blocks detected but mmdc not installed. Run '#{$PROGRAM_NAME} --install-deps' or 'npm i -g @mermaid-js/mermaid-cli'."
+    end
+
+    cache_dir = File.join(@tool_home, "cache", "mermaid")
+    puppeteer_config = ENV["MMDC_PUPPETEER_CONFIG"]
+    puppeteer_config = nil unless puppeteer_config && File.file?(puppeteer_config)
+
+    rendered = MermaidPreprocessor.process(content,
+      cache_dir: cache_dir, mmdc: mmdc,
+      puppeteer_config: puppeteer_config, tmpdir: tmpdir)
+
+    path = File.join(tmpdir, "mermaid-#{File.basename(@input_file)}")
+    File.write(path, rendered)
+    path
+  end
+
+  def locate_mmdc
+    local = File.join(@tool_home, "npm", MERMAID_NPM_PACKAGE, "node_modules", ".bin", MERMAID_BIN)
+    return local if File.executable?(local)
+    return MERMAID_BIN if have_cmd(MERMAID_BIN)
+    nil
   end
 
   def ensure_weasy_env

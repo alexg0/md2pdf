@@ -10,6 +10,7 @@ Multi-engine Markdown to PDF converter. Supports 10 rendering backends with a un
 - Automatic title detection from first H1 heading
 - Isolated tool home directory to avoid global binary conflicts
 - Unicode character normalization for LaTeX engines
+- Native rendering of fenced ```` ```mermaid ```` blocks via `mmdc` (cached)
 - Per-mode warnings when options are unsupported
 
 ## Supported Modes
@@ -88,6 +89,8 @@ Common options:
   --number-sections   Number section headings
   --no-number-sections
                       Do not number section headings
+  --mermaid           Pre-render fenced ```mermaid blocks via mmdc (default)
+  --no-mermaid        Skip mermaid preprocessing
 
 Actions:
   --list-modes        List modes and install status
@@ -136,12 +139,27 @@ numbersections: false
 `number_sections:` is accepted by `md2pdf` and normalized to pandoc's
 `numbersections:` metadata key before rendering.
 
+## Mermaid diagrams
+
+Fenced ```` ```mermaid ```` blocks are rendered to cached PNGs via
+[mermaid-cli](https://github.com/mermaid-js/mermaid-cli) before the markdown is
+handed to the renderer. PNGs are cached in
+`${MD2PDF_TOOL_HOME}/cache/mermaid/mermaid-<hash>.png` keyed by a SHA-256 of
+the block contents, so repeated runs skip `mmdc`.
+
+If a document has no mermaid fences, `mmdc` is never invoked and is not a
+required dependency. When fences are present but `mmdc` is missing, `md2pdf`
+exits with instructions to install it (`md2pdf --install-deps` for the
+selected mode, or `npm i -g @mermaid-js/mermaid-cli`). Pass `--no-mermaid` to
+leave fences untouched.
+
 ## Configuration
 
 | Environment Variable | Description |
 |---------------------|-------------|
 | `MD2PDF_TOOL_HOME` | Override tool install root (default: `~/.local/share/md2pdf`) |
 | `MD2PDF_DEBUG=1` | Keep temporary files on failure for debugging |
+| `MMDC_PUPPETEER_CONFIG` | Path to a Puppeteer JSON config file passed to `mmdc -p` when set and existing |
 
 ## Testing
 
