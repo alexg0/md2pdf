@@ -252,12 +252,13 @@ Unit tests run without any rendering engine installed. Integration tests automat
 make release VERSION=0.2.0
 ```
 
-`release` runs `release-tag` (writes the new version to `VERSION` and to the
-`MD2PDF_VERSION` constant in `bin/md2pdf`, commits, and creates an annotated tag),
-then pushes `HEAD` to `origin/master` and pushes the new tag. It refuses to run
-unless `HEAD` is exactly at `origin/master`, so you can release from any local
-branch (including a Conductor workspace branch) as long as it's at the tip of
-master. To do those steps separately:
+`release` always tags `origin/master`, regardless of which local branch you're
+on. It fetches `origin/master`, detaches HEAD there, runs `release-tag` (writes
+the new version to `VERSION` and to the `MD2PDF_VERSION` constant in
+`bin/md2pdf`, commits, and tags `vX.Y.Z`), pushes the commit and tag, then
+returns you to your original branch. This makes it safe to release from any
+Conductor workspace branch — your local commits never leak into the release.
+The working tree must be clean. To do the steps manually from `master`:
 
 ```bash
 make release-tag VERSION=0.2.0

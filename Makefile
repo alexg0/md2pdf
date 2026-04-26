@@ -65,17 +65,18 @@ release-tag: ## Bump VERSION (VERSION=X.Y.Z), update baked constant, commit, tag
 	@git tag -a "v$(VERSION)" -m "v$(VERSION)"
 	@echo "Tagged v$(VERSION). Push with: git push origin master && git push origin v$(VERSION)"
 
-release: ## Bump, commit, tag, and push origin master + tag (triggers Homebrew tap PR)
+release: ## Tag origin/master with v$(VERSION) and push (triggers Homebrew tap PR)
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=X.Y.Z"; exit 1; fi
+	@if ! echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then echo "VERSION must be semver X.Y.Z"; exit 1; fi
+	@if git rev-parse "v$(VERSION)" >/dev/null 2>&1; then echo "Tag v$(VERSION) already exists"; exit 1; fi
+	@if [ -n "$$(git status --porcelain)" ]; then echo "Working tree not clean; commit or stash first."; exit 1; fi
 	@git fetch --quiet origin master
-	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/master)" ]; then \
-		echo "Refusing to release: HEAD is not at origin/master."; \
-		echo "  HEAD:           $$(git rev-parse --short HEAD) ($$(git rev-parse --abbrev-ref HEAD))"; \
-		echo "  origin/master:  $$(git rev-parse --short origin/master)"; \
-		exit 1; \
-	fi
-	@$(MAKE) release-tag VERSION=$(VERSION)
-	@git push origin HEAD:master
-	@git push origin "v$(VERSION)"
+	@orig="$$(git rev-parse --abbrev-ref HEAD)"; \
+		trap 'git checkout --quiet "$$orig"' EXIT; \
+		git checkout --quiet --detach origin/master && \
+		$(MAKE) release-tag VERSION=$(VERSION) && \
+		git push origin HEAD:master && \
+		git push origin "v$(VERSION)"
 
 install-prereqs: ## Install development prerequisites (bats-core)
 	@if command -v bats >/dev/null 2>&1; then \
