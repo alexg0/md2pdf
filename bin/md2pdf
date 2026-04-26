@@ -482,7 +482,7 @@ class Md2Pdf
     @title = nil
     @author = nil
     @action = :render
-    @input_file = nil
+    @input_files = []
     @output_file = nil
     @warnings = []
     @temp_dirs = []
@@ -507,10 +507,11 @@ class Md2Pdf
   def parse_args(argv)
     args = argv.dup
     parser = OptionParser.new do |opts|
-      opts.banner = "Usage: #{$PROGRAM_NAME} [options] input.md [output.pdf]"
+      opts.banner = "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf | -o output.pdf]"
       opts.on("--mode MODE", "Renderer mode (default: #{DEFAULTS[:mode]})") { |v| @mode = v }
       opts.on("-t TITLE", "PDF title") { |v| @title = v }
       opts.on("-a AUTHOR", "Author line") { |v| @author = v }
+      opts.on("-o PATH", "--output PATH", "Output PDF path (required when passing multiple inputs)") { |v| @output_file = v }
       opts.on("--font FONT", "Body font") { |v| @font_family = v; @font_explicit = true }
       opts.on("-m MARGIN", "Page margin (default: #{DEFAULTS[:margin]})") { |v| @margin = v }
       opts.on("-s SIZE", "Font size (default: #{DEFAULTS[:fontsize]})") { |v| @fontsize = v }
@@ -529,9 +530,17 @@ class Md2Pdf
     remaining = parser.parse(args)
     @mode = "pandoc-xelatex" if @mode == "latex"
     abort "Unknown mode: #{@mode}" unless MODES.key?(@mode)
-    @input_file = remaining.shift
-    @output_file = remaining.shift
-    abort "Unexpected extra arguments: #{remaining.join(" ")}" unless remaining.empty?
+
+    if @output_file
+      @input_files = remaining
+    elsif remaining.size > 1 && remaining.last.downcase.end_with?(".pdf")
+      @output_file = remaining.pop
+      @input_files = remaining
+    elsif remaining.size > 1
+      abort "specify output with -o when passing multiple inputs"
+    else
+      @input_files = remaining
+    end
   end
 
   # --- Actions ---
@@ -581,8 +590,8 @@ class Md2Pdf
   # --- Unified render ---
 
   def render
-    abort "Usage: #{$PROGRAM_NAME} [options] input.md [output.pdf]\nRun with --help for details." if @input_file.nil?
-    abort "File not found: #{@input_file}" unless File.file?(@input_file)
+    abort "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf | -o output.pdf]\nRun with --help for details." if @input_files.empty?
+    @input_files.each { |f| abort "File not found: #{f}" unless File.file?(f) }
 
     unless check_mode_deps(@mode)
       abort "Dependencies missing for mode '#{@mode}'. Run: #{$PROGRAM_NAME} --mode #{@mode} --install-deps"
@@ -594,12 +603,13 @@ class Md2Pdf
     resolved = resolve_output
     FileUtils.mkdir_p(File.dirname(resolved))
     tmpdir = new_temp_dir
-    source_content = File.read(@input_file, encoding: "utf-8")
-    input_path = preprocess_mermaid(source_content, tmpdir) || @input_file
+    effective_input = prepare_input(tmpdir)
+    source_content = File.read(effective_input, encoding: "utf-8")
+    input_path = preprocess_mermaid(source_content, tmpdir) || effective_input
 
     ctx = {
       binary: binary, input: input_path, output: resolved, tmpdir: tmpdir,
-      source_dir: File.dirname(File.expand_path(@input_file)),
+      source_dir: File.dirname(File.expand_path(@input_files.first)),
       title: detect_title, author: @author, date: latex_date,
       margin: @margin, fontsize: @fontsize, font: @font_family,
       toc: RenderHelpers.resolve_toc(source_content, @toc, DEFAULTS[:toc]),
@@ -608,12 +618,34 @@ class Md2Pdf
       engine: cfg[:engine],
       number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
       number_sections_override: @number_sections,
-      resource_path: "#{File.dirname(File.expand_path(@input_file))}:.:#{@script_dir}",
+      resource_path: build_resource_path,
     }
 
     cmds = cfg[:render].call(ctx)
     cmds.each { |cmd| run_cmd(*cmd) }
     puts resolved
+  end
+
+  def prepare_input(tmpdir)
+    return @input_files.first if @input_files.size == 1
+
+    combined = @input_files.each_with_index.map do |path, idx|
+      content = File.read(path, encoding: "utf-8")
+      idx.zero? ? content : strip_frontmatter(content)
+    end.join("\n\n")
+
+    path = File.join(tmpdir, "concatenated.md")
+    File.write(path, combined)
+    path
+  end
+
+  def strip_frontmatter(content)
+    content.sub(/\A(?:\uFEFF)?---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\z)/m, "")
+  end
+
+  def build_resource_path
+    dirs = @input_files.map { |f| File.dirname(File.expand_path(f)) }
+    (dirs + [".", @script_dir]).uniq.join(":")
   end
 
   # --- Binary resolution (config-driven) ---
@@ -691,19 +723,21 @@ class Md2Pdf
 
   def detect_title
     return @title if @title
-    File.foreach(@input_file) do |line|
+    first = @input_files.first
+    File.foreach(first) do |line|
       return line.sub(/^#\s+/, "").strip if line.start_with?("# ")
     end
-    File.basename(@input_file, ".*")
+    File.basename(first, ".*")
   end
 
   def resolve_output
     return @output_file if @output_file
-    File.join(File.dirname(@input_file), "#{File.basename(@input_file, ".md")}.pdf")
+    first = @input_files.first
+    File.join(File.dirname(first), "#{File.basename(first, ".md")}.pdf")
   end
 
   def latex_date
-    File.mtime(@input_file).strftime("%B %d, %Y")
+    File.mtime(@input_files.first).strftime("%B %d, %Y")
   rescue
     Time.now.strftime("%B %d, %Y")
   end
@@ -791,7 +825,8 @@ class Md2Pdf
       cache_dir: cache_dir, mmdc: mmdc,
       puppeteer_config: puppeteer_config, tmpdir: tmpdir)
 
-    path = File.join(tmpdir, "mermaid-#{File.basename(@input_file)}")
+    basename = @input_files.size == 1 ? File.basename(@input_files.first) : "concatenated.md"
+    path = File.join(tmpdir, "mermaid-#{basename}")
     File.write(path, rendered)
     path
   end

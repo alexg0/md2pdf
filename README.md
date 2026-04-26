@@ -73,12 +73,14 @@ brew install --cask font-noto-serif
 ## Usage
 
 ```
-Usage: md2pdf [options] input.md [output.pdf]
+Usage: md2pdf [options] input.md [input2.md ...] [output.pdf | -o output.pdf]
 
 Common options:
   --mode MODE         Renderer mode (default: pandoc-xelatex)
   -t TITLE            PDF title (default: first # H1 from file, or filename)
   -a AUTHOR           Author line (default: none)
+  -o, --output PATH   Output PDF path (required when passing multiple inputs
+                      unless the last positional ends in .pdf)
   --font FONT         Preferred body font where supported (default: Noto Serif)
   -m MARGIN           Page margin (default: 1in)
   -s SIZE             Font size (default: 11pt)
@@ -110,6 +112,12 @@ md2pdf README.md
 # Specify output file
 md2pdf README.md output.pdf
 
+# Concatenate multiple inputs into a single PDF (last positional .pdf is output)
+md2pdf intro.md chapter1.md chapter2.md book.pdf
+
+# Same, with explicit -o (all positionals are inputs)
+md2pdf -o book.pdf intro.md chapter1.md chapter2.md
+
 # Use a different engine
 md2pdf --mode pandoc-lualatex README.md
 
@@ -125,6 +133,15 @@ md2pdf --list-modes
 # Check if dependencies are met
 md2pdf --mode go-md2pdf --check-deps
 ```
+
+### Multiple inputs
+
+When multiple input files are passed, they are concatenated (separated by a
+blank line) and rendered as a single PDF. Title auto-detection runs on the
+first input only. YAML frontmatter from the first input is preserved;
+frontmatter blocks in subsequent inputs are stripped silently. For pandoc
+modes, the resource path includes every input file's directory, so embedded
+images resolve relative to whichever input referenced them.
 
 Pandoc modes also honor YAML frontmatter for table-of-contents and section
 numbering control:

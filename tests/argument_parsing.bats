@@ -49,10 +49,15 @@ load test_helper
   [ "$status" -ne 0 ]
 }
 
-@test "extra positional arguments fail" {
-  run "$MD2PDF" input.md output.pdf extra.txt
+@test "multiple inputs without -o or trailing .pdf fail" {
+  run "$MD2PDF" input.md another.md
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Unexpected extra"* ]]
+  [[ "$output" == *"specify output with -o"* ]]
+}
+
+@test "-o requires a value" {
+  run "$MD2PDF" -o
+  [ "$status" -ne 0 ]
 }
 
 @test "unknown mode fails" {
