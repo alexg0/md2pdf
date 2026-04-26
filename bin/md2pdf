@@ -38,7 +38,7 @@ require "yaml"
 # and returns an array of command arrays to execute in order.
 # ---------------------------------------------------------------------------
 
-MD2PDF_VERSION = "0.1.0"
+MD2PDF_VERSION = "0.1.3"
 
 DEFAULTS = {
   font_family: "Noto Serif",
