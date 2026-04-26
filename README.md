@@ -1,10 +1,10 @@
 # md2pdf
 
-Multi-engine Markdown to PDF converter. Supports 10 rendering backends with a unified CLI interface.
+Multi-engine Markdown to PDF (and DOCX) converter. Supports 11 rendering backends with a unified CLI interface.
 
 ## Features
 
-- **10 rendering backends** with automatic fallback and dependency management
+- **11 rendering backends** with automatic fallback and dependency management
 - Configurable title, author, margins, font size, and page numbering
 - Automatic table of contents generation (where supported)
 - Automatic title detection from first H1 heading
@@ -28,6 +28,7 @@ Multi-engine Markdown to PDF converter. Supports 10 rendering backends with a un
 | `go-md2pdf` | Go/fpdf | go |
 | `weasy-md2pdf` | Python/WeasyPrint | python3, brew |
 | `percollate` | Experimental HTML-first | pandoc, node, npm |
+| `pandoc-docx` (aliases: `docx`, `word`) | Pandoc → DOCX (Word) | pandoc, zip |
 
 ## Installation
 
@@ -81,7 +82,7 @@ md2pdf --install-deps-all
 ## Usage
 
 ```
-Usage: md2pdf [options] input.md [input2.md ...] [output.pdf | -o output.pdf]
+Usage: md2pdf [options] input.md [input2.md ...] [output.pdf|output.docx | -o PATH]
 
 Common options:
   --mode MODE         Renderer mode (default: pandoc-xelatex)
@@ -102,6 +103,9 @@ Common options:
                       Do not number section headings
   --mermaid           Pre-render fenced ```mermaid blocks via mmdc (default)
   --no-mermaid        Skip mermaid preprocessing
+  --reference-doc PATH
+                      DOCX template for pandoc-docx mode (controls fonts,
+                      margins, styles via Word's reference-doc mechanism)
 
 Actions:
   --list-modes        List modes and install status
@@ -220,6 +224,41 @@ required dependency. When fences are present but `mmdc` is missing, `md2pdf`
 exits with instructions to install it (`md2pdf --install-deps` for the
 selected mode, or `npm i -g @mermaid-js/mermaid-cli`). Pass `--no-mermaid` to
 leave fences untouched.
+
+## DOCX output
+
+Despite the name, `md2pdf` also produces Microsoft Word documents via the
+`pandoc-docx` mode (also accepts `--mode docx` or `--mode word`):
+
+```bash
+# Default output extension follows the mode (foo.md -> foo.docx)
+md2pdf --mode docx report.md
+
+# Or pass an explicit .docx path as the last positional
+md2pdf --mode docx report.md report.docx
+
+# Use a Word template to control fonts, margins, and paragraph styles
+md2pdf --mode word --reference-doc template.docx report.md
+```
+
+`--reference-doc` is forwarded to pandoc's `--reference-doc` flag. To create a
+starter template, run `pandoc -o template.docx --print-default-data-file reference.docx`,
+edit it in Word, then point `--reference-doc` at it.
+
+`pandoc-docx` honors `-t/--title`, `-a/--author`, `--toc`, `--number-sections`,
+and mermaid preprocessing. The same keys are also read from YAML frontmatter
+(`title`, `author`, `date`, `toc`, `numbersections`) — same precedence as the
+PDF modes (CLI > frontmatter > default). `margin`/`fontsize`/`font` are
+ignored (with warnings) because docx layout is template-driven; control them
+through `--reference-doc` instead. `--reference-doc` itself is CLI-only.
+
+`md2pdf` post-processes the docx to set `<w:updateFields w:val="true"/>` in
+`word/settings.xml`. Without it, Word opens the file with a blank TOC and
+prompts the user to "update fields" / "update external references" — pandoc
+emits TOC fields with no cached body that Word evaluates lazily. The patch
+asks Word to evaluate fields at open time so the TOC populates and the
+prompt is suppressed. Requires `unzip` and `zip` on PATH (preinstalled on
+macOS and most Linux distros).
 
 ## Configuration
 

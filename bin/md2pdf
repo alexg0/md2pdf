@@ -54,6 +54,12 @@ DEFAULTS = {
 MERMAID_NPM_PACKAGE = "@mermaid-js/mermaid-cli"
 MERMAID_BIN = "mmdc"
 
+MODE_ALIASES = {
+  "latex" => "pandoc-xelatex",
+  "docx" => "pandoc-docx",
+  "word" => "pandoc-docx",
+}.freeze
+
 # Frontmatter keys md2pdf understands (canonical names).
 FRONTMATTER_RECOGNIZED = %w[title author date margin fontsize font page_numbers toc numbersections prevent_widows].freeze
 
@@ -377,6 +383,31 @@ PANDOC_RENDER = ->(ctx) do
   [cmd]
 end
 
+# --- Pandoc DOCX render builder ---
+#
+# Pandoc produces .docx natively via `-o foo.docx` (no --pdf-engine).
+# Layout (margins/fonts/styles) is controlled by --reference-doc, not by
+# CSS or LaTeX flags, so margin/fontsize/font do not apply here.
+
+PANDOC_DOCX_RENDER = ->(ctx) do
+  tmpdir = ctx[:tmpdir]
+
+  content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
+  content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
+  tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
+
+  cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]} -o #{ctx[:output]}]
+  cmd << "--number-sections" if ctx[:number_sections]
+  cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
+  cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
+  cmd << "--metadata=toc:true" if ctx[:toc_override] == true
+  cmd << "--metadata=toc:false" if ctx[:toc_override] == false
+  cmd << "--toc" if ctx[:toc]
+  cmd += ["--reference-doc", ctx[:reference_doc]] if ctx[:reference_doc]
+
+  [cmd]
+end
+
 # --- md-to-pdf render builder (Puppeteer + JSON config) ---
 
 MD_TO_PDF_RENDER = ->(ctx) do
@@ -552,6 +583,16 @@ MODES = {
     binary: { npm: { package: "percollate", bin: "percollate" } },
     render: PERCOLLATE_RENDER,
   },
+  "pandoc-docx" => {
+    label: "Pandoc -> DOCX", runtime: "pandoc, zip", alias_tag: " [aliases: docx, word]",
+    note: "Pandoc DOCX output. Title/author/TOC supported. Margin/font/fontsize come from --reference-doc. Aliases: 'docx', 'word'.",
+    output_ext: "docx",
+    supports: %i[title author toc mermaid reference_doc],
+    deps: { cmds: %w[pandoc unzip zip] },
+    install: { brew: %w[pandoc] },
+    binary: { system: "pandoc" },
+    render: PANDOC_DOCX_RENDER,
+  },
 }.freeze
 
 # ---------------------------------------------------------------------------
@@ -573,6 +614,7 @@ class Md2Pdf
     @author = nil
     @author_explicit = false
     @no_author = false
+    @reference_doc = nil
     @action = :render
     @input_files = []
     @output_file = nil
@@ -599,7 +641,7 @@ class Md2Pdf
   def parse_args(argv)
     args = argv.dup
     parser = OptionParser.new do |opts|
-      opts.banner = "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf | -o output.pdf]"
+      opts.banner = "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf|output.docx | -o PATH]"
       opts.on("--mode MODE", "Renderer mode (default: #{DEFAULTS[:mode]})") { |v| @mode = v }
       opts.on("-t TITLE", "PDF title") { |v| @title = v }
       opts.on("-a", "--author AUTHOR", "Author line (default: frontmatter author, then git config user.name)") { |v| @author = v; @author_explicit = true }
@@ -613,6 +655,7 @@ class Md2Pdf
       opts.on("--[no-]page-numbers", "Page numbers (default: on)") { |v| @page_numbers = v }
       opts.on("--[no-]prevent-widows", "Forbid widow/orphan lines across page breaks (default: off)") { |v| @prevent_widows = v }
       opts.on("--[no-]mermaid", "Pre-render fenced ```mermaid blocks via mmdc (default: on)") { |v| @mermaid = v }
+      opts.on("--reference-doc PATH", "DOCX template for pandoc-docx mode (controls fonts, margins, styles)") { |v| @reference_doc = v }
       opts.on("--list-modes", "List modes and install status") { @action = :list_modes }
       opts.on("--check-deps", "Check deps for selected mode") { @action = :check_deps }
       opts.on("--check-deps-all", "Check deps for all modes") { @action = :check_deps_all }
@@ -623,12 +666,12 @@ class Md2Pdf
     end
 
     remaining = parser.parse(args)
-    @mode = "pandoc-xelatex" if @mode == "latex"
+    @mode = MODE_ALIASES.fetch(@mode, @mode)
     abort "Unknown mode: #{@mode}" unless MODES.key?(@mode)
 
     if @output_file
       @input_files = remaining
-    elsif remaining.size > 1 && remaining.last.downcase.end_with?(".pdf")
+    elsif remaining.size > 1 && remaining.last.downcase.match?(/\.(pdf|docx)\z/)
       @output_file = remaining.pop
       @input_files = remaining
     elsif remaining.size > 1
@@ -685,8 +728,9 @@ class Md2Pdf
   # --- Unified render ---
 
   def render
-    abort "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf | -o output.pdf]\nRun with --help for details." if @input_files.empty?
+    abort "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf|output.docx | -o PATH]\nRun with --help for details." if @input_files.empty?
     @input_files.each { |f| abort "File not found: #{f}" unless File.file?(f) }
+    abort "Reference doc not found: #{@reference_doc}" if @reference_doc && !File.file?(@reference_doc)
 
     unless check_mode_deps(@mode)
       abort "Dependencies missing for mode '#{@mode}'. Run: #{$PROGRAM_NAME} --mode #{@mode} --install-deps"
@@ -724,11 +768,44 @@ class Md2Pdf
       number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
       number_sections_override: @number_sections,
       resource_path: build_resource_path,
+      reference_doc: @reference_doc,
     }
 
     cmds = cfg[:render].call(ctx)
     cmds.each { |cmd| run_cmd(*cmd) }
+    patch_docx_update_fields(resolved, tmpdir) if cfg[:output_ext] == "docx"
     puts resolved
+  end
+
+  # Pandoc emits the docx TOC as a "dirty" Word field whose body is empty —
+  # Word leaves the TOC blank and prompts the user to update fields/external
+  # references on open. Injecting <w:updateFields w:val="true"/> into
+  # settings.xml tells Word to evaluate fields automatically when the file
+  # opens, which populates the TOC and suppresses the prompt.
+  def patch_docx_update_fields(docx_path, tmpdir)
+    return unless File.file?(docx_path)
+    return unless have_cmd("unzip") && have_cmd("zip")
+
+    abs_docx = File.expand_path(docx_path)
+    patch_dir = File.join(tmpdir, "docx-patch")
+    FileUtils.mkdir_p(patch_dir)
+
+    return unless system("unzip", "-q", "-o", abs_docx, "word/settings.xml", "-d", patch_dir,
+                         out: File::NULL, err: File::NULL)
+
+    settings_path = File.join(patch_dir, "word", "settings.xml")
+    return unless File.file?(settings_path)
+
+    xml = File.read(settings_path)
+    return if xml.include?("<w:updateFields ")
+
+    patched = xml.sub("</w:settings>", '<w:updateFields w:val="true"/></w:settings>')
+    return if patched == xml
+
+    File.write(settings_path, patched)
+    Dir.chdir(patch_dir) do
+      system("zip", "-q", abs_docx, "word/settings.xml", exception: true)
+    end
   end
 
   def prepare_input(tmpdir)
@@ -818,6 +895,7 @@ class Md2Pdf
     @warnings << "mode #{@mode} ignores -s/--size" if @fontsize && !supports.include?(:fontsize)
     @warnings << "mode #{@mode} does not support arbitrary system font selection" if @font_family && !supports.include?(:font)
     @warnings << "mode #{@mode} does not support auto-generated TOC" if !@toc.nil? && !supports.include?(:toc)
+    @warnings << "mode #{@mode} ignores --reference-doc" if @reference_doc && !supports.include?(:reference_doc)
   end
 
   def warn_unmapped_frontmatter_options(options)
@@ -892,7 +970,8 @@ class Md2Pdf
   def resolve_output
     return @output_file if @output_file
     first = @input_files.first
-    File.join(File.dirname(first), "#{File.basename(first, ".md")}.pdf")
+    ext = cfg[:output_ext] || "pdf"
+    File.join(File.dirname(first), "#{File.basename(first, ".md")}.#{ext}")
   end
 
   def latex_date
