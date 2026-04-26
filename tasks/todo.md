@@ -133,3 +133,20 @@
 - `make test` passed: 106 tests.
 - `git diff --check` passed.
 - `./bin/md2pdf --help` shows `-a, --author AUTHOR`.
+
+## AG-6 (Linear): Frontmatter-driven per-doc options
+
+- [x] Add `frontmatter_options` parser returning `(options_hash, unknown_keys)`
+- [x] Add `prune_frontmatter` to strip consumed keys + normalize aliases
+- [x] Wire CLI > frontmatter > default precedence in `Md2Pdf#render`
+- [x] Strip `title`, `author`, `date`, `margin`, `fontsize`, `font`, `page_numbers` from frontmatter passed to pandoc
+- [x] Warn on unrecognized frontmatter keys
+- [x] Tests for title, author, margin, fontsize, font, page_numbers, date, aliases, unknown-key warning
+- [x] README updated with recognized keys, aliases, and precedence
+
+### Lessons
+
+- Ruby `Regexp` mixes named and unnamed capture groups badly — when a pattern contains
+  a named group (e.g., `(?<body>...)`), unnamed groups stop being indexable via
+  `m[1]`/`m[3]` and only the named ones populate. Fix: name *all* groups consistently
+  in the same pattern.

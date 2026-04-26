@@ -27,10 +27,12 @@
 #   ./bin/md2pdf --install-deps-all
 
 require "digest"
+require "date"
 require "fileutils"
 require "json"
 require "optparse"
 require "tmpdir"
+require "yaml"
 
 # ---------------------------------------------------------------------------
 # Mode registry
@@ -58,6 +60,22 @@ DEFAULTS = {
 
 MERMAID_NPM_PACKAGE = "@mermaid-js/mermaid-cli"
 MERMAID_BIN = "mmdc"
+
+# Frontmatter keys md2pdf understands (canonical names).
+FRONTMATTER_RECOGNIZED = %w[title author date margin fontsize font page_numbers toc numbersections].freeze
+
+# Aliased frontmatter keys mapped to their canonical name.
+FRONTMATTER_ALIASES = {
+  "font_size" => "fontsize",
+  "page-numbers" => "page_numbers",
+  "pageNumbers" => "page_numbers",
+  "number_sections" => "numbersections",
+  "number_section" => "numbersections",
+}.freeze
+
+# Keys md2pdf consumes itself (passed to renderers via flags), so they are stripped
+# from the frontmatter before pandoc reads it to avoid double-emission.
+FRONTMATTER_CONSUMED = %w[title author date margin fontsize font page_numbers].freeze
 
 # --- Mermaid preprocessor ---
 #
@@ -193,73 +211,62 @@ module RenderHelpers
     number_sections?(content)
   end
 
-  def resolve_toc(content, override, default)
-    return override unless override.nil?
-
-    frontmatter_bool(content, "toc") { default }
-  end
-
-  def normalize_number_sections_frontmatter(content)
-    content.sub(/\A((?:\uFEFF)?---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\z))/m) do |frontmatter|
-      frontmatter.gsub(/^([ \t]*)number_sections([ \t]*:)/, "\\1numbersections\\2")
-    end
-  end
-
-  def remove_frontmatter_key(content, key)
-    content.sub(/\A((?:\uFEFF)?---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\z))/m) do |frontmatter|
-      remove_yaml_key(frontmatter, key)
-    end
-  end
-
-  def frontmatter_bool(content, key)
+  # Parse the frontmatter block and return [options_hash, unknown_keys].
+  # options_hash uses symbol keys with canonical names.
+  def frontmatter_options(content)
     body = frontmatter_body(content)
-    return yield unless body
+    return [{}, []] unless body
 
-    body.each_line do |line|
-      next unless (match = line.match(/^[ \t]*#{Regexp.escape(key)}[ \t]*:[ \t]*(?<value>[^#\r\n]*)/))
+    data = YAML.safe_load(body, permitted_classes: [Date, Time], aliases: false)
+    return [{}, []] unless data.is_a?(Hash)
 
-      value = match[:value].strip.downcase
-      return true if %w[true yes on 1].include?(value)
-      return false if %w[false no off 0].include?(value)
-    end
+    options = {}
+    unknown = []
+    data.each do |key, value|
+      key = key.to_s
+      canonical = FRONTMATTER_ALIASES[key] || key
 
-    yield
-  end
-
-  def frontmatter_string(content, key)
-    body = frontmatter_body(content)
-    return nil unless body
-
-    body.each_line do |line|
-      next unless (match = line.match(/^[ \t]*#{Regexp.escape(key)}[ \t]*:[ \t]*(?<value>[^\r\n]*)/))
-
-      value = match[:value].strip
-      next if value.empty?
-
-      if (quoted = value.match(/\A"(?<inner>.*)"\z/) || value.match(/\A'(?<inner>.*)'\z/))
-        return quoted[:inner]
+      unless FRONTMATTER_RECOGNIZED.include?(canonical)
+        unknown << key
+        next
       end
 
-      value = value.sub(/[ \t]+#.*\z/, "").rstrip
-      return value unless value.empty?
+      case canonical
+      when "page_numbers", "toc", "numbersections"
+        bool = parse_frontmatter_bool(value)
+        options[canonical.to_sym] = bool unless bool.nil?
+      else
+        next if value.nil? || value.is_a?(Array) || value.is_a?(Hash)
+        options[canonical.to_sym] = value.to_s
+      end
     end
-
-    nil
+    [options, unknown]
+  rescue Psych::Exception
+    [{}, []]
   end
 
-  def remove_yaml_key(frontmatter, key)
-    lines = frontmatter.lines
+  # Rewrite the leading frontmatter block: drop lines for keys md2pdf consumes,
+  # and normalize remaining alias keys (number_sections -> numbersections) so
+  # pandoc reads its expected metadata names.
+  def prune_frontmatter(content)
+    content.sub(/\A(?<pre>(?:﻿)?---[ \t]*\r?\n)(?<body>.*?)(?<post>\r?\n---[ \t]*(?:\r?\n|\z))/m) do
+      pre = Regexp.last_match(:pre)
+      body = Regexp.last_match(:body)
+      post = Regexp.last_match(:post)
+
+      kept = prune_consumed_frontmatter_lines(body)
+      kept = kept.gsub(/^(?:number_sections|number_section)([ \t]*:)/, "numbersections\\1")
+
+      "#{pre}#{kept}#{post}"
+    end
+  end
+
+  def prune_consumed_frontmatter_lines(body)
     output = []
     skipping = false
     key_indent = 0
 
-    lines.each_with_index do |line, index|
-      if index.zero? || line.match?(/\A---[ \t]*(?:\r?\n|\z)/)
-        output << line
-        skipping = false
-        next
-      end
-
+    body.each_line do |line|
       if skipping
         indent = line[/\A[ \t]*/].length
         next if line.strip.empty? || indent > key_indent || (indent == key_indent && line.lstrip.start_with?("-"))
@@ -267,10 +274,13 @@ module RenderHelpers
         skipping = false
       end
 
-      if (match = line.match(/\A(?<indent>[ \t]*)#{Regexp.escape(key)}[ \t]*:/))
-        key_indent = match[:indent].length
-        skipping = true
-        next
+      if (m = line.match(/\A(?<key>[A-Za-z][A-Za-z0-9_-]*)[ \t]*:/))
+        canonical = FRONTMATTER_ALIASES[m[:key]] || m[:key]
+        if FRONTMATTER_CONSUMED.include?(canonical)
+          key_indent = 0
+          skipping = true
+          next
+        end
       end
 
       output << line
@@ -279,11 +289,20 @@ module RenderHelpers
     output.join
   end
 
+  def parse_frontmatter_bool(value)
+    return value if value == true || value == false
+
+    v = value.to_s.strip.downcase
+    return true if %w[true yes on 1].include?(v)
+    return false if %w[false no off 0].include?(v)
+    nil
+  end
+
   def frontmatter_controls_numbering?(content)
     body = frontmatter_body(content)
     return false unless body
 
-    body.each_line.any? { |line| line.match?(/^[ \t]*(numbersections|number_section|number_sections)[ \t]*:/) }
+    body.each_line.any? { |line| line.match?(/^(numbersections|number_section|number_sections)[ \t]*:/) }
   end
 
   def frontmatter_body(content)
@@ -310,9 +329,7 @@ PANDOC_RENDER = ->(ctx) do
 
   # Preprocess: title block + unicode normalization
   content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  source_content = File.read(ctx[:input], encoding: "utf-8")
-  source_content = RenderHelpers.remove_frontmatter_key(source_content, "author") if ctx[:author_overrides_frontmatter]
-  content << RenderHelpers.normalize_number_sections_frontmatter(source_content)
+  content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
   LATEX_UNICODE.each { |k, v| content.gsub!(k, v) }
   PDFLATEX_EXTRA.each { |k, v| content.gsub!(k, v) } if engine == "pdflatex"
   tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
@@ -532,14 +549,13 @@ MODES = {
 class Md2Pdf
   def initialize(argv)
     @mode = DEFAULTS[:mode]
-    @font_family = DEFAULTS[:font_family]
-    @margin = DEFAULTS[:margin]
-    @fontsize = DEFAULTS[:fontsize]
+    @font_family = nil
+    @margin = nil
+    @fontsize = nil
     @toc = nil
     @number_sections = nil
-    @page_numbers = DEFAULTS[:page_numbers]
+    @page_numbers = nil
     @mermaid = true
-    @font_explicit = false
     @title = nil
     @author = nil
     @author_explicit = false
@@ -576,7 +592,7 @@ class Md2Pdf
       opts.on("-a", "--author AUTHOR", "Author line (default: frontmatter author, then git config user.name)") { |v| @author = v; @author_explicit = true }
       opts.on("--no-author", "Suppress author line entirely (overrides frontmatter and git fallback)") { @no_author = true }
       opts.on("-o PATH", "--output PATH", "Output PDF path (required when passing multiple inputs)") { |v| @output_file = v }
-      opts.on("--font FONT", "Body font") { |v| @font_family = v; @font_explicit = true }
+      opts.on("--font FONT", "Body font") { |v| @font_family = v }
       opts.on("-m MARGIN", "Page margin (default: #{DEFAULTS[:margin]})") { |v| @margin = v }
       opts.on("-s SIZE", "Font size (default: #{DEFAULTS[:fontsize]})") { |v| @fontsize = v }
       opts.on("--[no-]toc", "Table of contents (default: on unless frontmatter sets toc)") { |v| @toc = v }
@@ -661,28 +677,36 @@ class Md2Pdf
       abort "Dependencies missing for mode '#{@mode}'. Run: #{$PROGRAM_NAME} --mode #{@mode} --install-deps"
     end
 
-    ensure_font(cfg[:engine]) if cfg[:font_check]
-
     binary = resolve_binary(cfg[:binary])
     resolved = resolve_output
     FileUtils.mkdir_p(File.dirname(resolved))
     tmpdir = new_temp_dir
     effective_input = prepare_input(tmpdir)
     source_content = File.read(effective_input, encoding: "utf-8")
+    fm_options, unknown_keys = RenderHelpers.frontmatter_options(source_content)
+    unknown_keys.each { |k| warn "warning: unrecognized frontmatter key: #{k}" }
+    warn_unmapped_frontmatter_options(fm_options)
+
+    resolved_font = @font_family || fm_options[:font] || DEFAULTS[:font_family]
+    ensure_font(cfg[:engine], resolved_font) if cfg[:font_check]
+
     input_path = preprocess_mermaid(source_content, tmpdir) || effective_input
 
     ctx = {
       binary: binary, input: input_path, output: resolved, tmpdir: tmpdir,
       source_dir: File.dirname(File.expand_path(@input_files.first)),
-      title: detect_title, author: resolve_author(source_content), date: latex_date,
-      margin: @margin, fontsize: @fontsize, font: @font_family,
-      toc: RenderHelpers.resolve_toc(source_content, @toc, DEFAULTS[:toc]),
+      title: @title || fm_options[:title] || detect_title_from_source,
+      author: resolve_author(fm_options),
+      date: fm_options[:date] || latex_date,
+      margin: @margin || fm_options[:margin] || DEFAULTS[:margin],
+      fontsize: @fontsize || fm_options[:fontsize] || DEFAULTS[:fontsize],
+      font: resolved_font,
+      toc: !@toc.nil? ? @toc : (fm_options.key?(:toc) ? fm_options[:toc] : DEFAULTS[:toc]),
       toc_override: @toc,
-      page_numbers: @page_numbers,
+      page_numbers: !@page_numbers.nil? ? @page_numbers : (fm_options.key?(:page_numbers) ? fm_options[:page_numbers] : DEFAULTS[:page_numbers]),
       engine: cfg[:engine],
       number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
       number_sections_override: @number_sections,
-      author_overrides_frontmatter: @author_explicit || @no_author,
       resource_path: build_resource_path,
     }
 
@@ -774,10 +798,22 @@ class Md2Pdf
     supports = cfg[:supports]
     @warnings << "mode #{@mode} ignores -t/--title" if @title && !supports.include?(:title)
     @warnings << "mode #{@mode} ignores -a/--author" if @author_explicit && !supports.include?(:author)
-    @warnings << "mode #{@mode} ignores -m/--margin" if @margin != DEFAULTS[:margin] && !supports.include?(:margin)
-    @warnings << "mode #{@mode} ignores -s/--size" if @fontsize != DEFAULTS[:fontsize] && !supports.include?(:fontsize)
-    @warnings << "mode #{@mode} does not support arbitrary system font selection" if @font_explicit && !supports.include?(:font)
-    @warnings << "mode #{@mode} does not support auto-generated TOC" if !@toc.nil? && @toc != DEFAULTS[:toc] && !supports.include?(:toc)
+    @warnings << "mode #{@mode} ignores -m/--margin" if @margin && !supports.include?(:margin)
+    @warnings << "mode #{@mode} ignores -s/--size" if @fontsize && !supports.include?(:fontsize)
+    @warnings << "mode #{@mode} does not support arbitrary system font selection" if @font_family && !supports.include?(:font)
+    @warnings << "mode #{@mode} does not support auto-generated TOC" if !@toc.nil? && !supports.include?(:toc)
+  end
+
+  def warn_unmapped_frontmatter_options(options)
+    supports = cfg[:supports]
+    warn "warning: mode #{@mode} ignores frontmatter title" if !@title && options.key?(:title) && !supports.include?(:title)
+    warn "warning: mode #{@mode} ignores frontmatter author" if !@author && options.key?(:author) && !supports.include?(:author)
+    warn "warning: mode #{@mode} ignores frontmatter margin" if !@margin && options.key?(:margin) && !supports.include?(:margin)
+    warn "warning: mode #{@mode} ignores frontmatter fontsize" if !@fontsize && options.key?(:fontsize) && !supports.include?(:fontsize)
+    if !@font_family && options.key?(:font) && !supports.include?(:font)
+      warn "warning: mode #{@mode} does not support arbitrary system font selection"
+    end
+    warn "warning: mode #{@mode} does not support auto-generated TOC" if @toc.nil? && options.key?(:toc) && !supports.include?(:toc)
   end
 
   def flush_warnings
@@ -786,8 +822,7 @@ class Md2Pdf
 
   # --- Helpers ---
 
-  def detect_title
-    return @title if @title
+  def detect_title_from_source
     first = @input_files.first
     File.foreach(first) do |line|
       return line.sub(/^#\s+/, "").strip if line.start_with?("# ")
@@ -804,12 +839,10 @@ class Md2Pdf
   #   git config user.name -> that (run from input file's directory)
   #   NAME, MAILNAME       -> first non-empty
   #   else                 -> nil
-  def resolve_author(source_content)
+  def resolve_author(fm_options)
     return nil if @no_author
     return @author if @author
-
-    fm = RenderHelpers.frontmatter_string(source_content, "author")
-    return fm if fm
+    return fm_options[:author] if fm_options[:author]
 
     git_env = env_value("GIT_AUTHOR_NAME") || env_value("GIT_COMMITTER_NAME")
     return git_env if git_env
@@ -887,21 +920,21 @@ class Md2Pdf
     system(env, *args, **opts, exception: true)
   end
 
-  def ensure_font(engine)
+  def ensure_font(engine, font)
     tmpdir = Dir.mktmpdir("md2pdf-font-")
     tex = File.join(tmpdir, "check.tex")
-    File.write(tex, "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{#{@font_family}}\n\\begin{document}\nfont check\n\\end{document}\n")
+    File.write(tex, "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{#{font}}\n\\begin{document}\nfont check\n\\end{document}\n")
     success = system(engine, "-interaction=nonstopmode", "-halt-on-error",
                      "-output-directory", tmpdir, tex, out: File::NULL, err: File::NULL)
     FileUtils.rm_rf(tmpdir)
     return if success
-    if @font_family == DEFAULTS[:font_family] && (brew = brew_cmd)
-      warn "Missing font '#{@font_family}'. Installing via: brew install --cask #{DEFAULTS[:font_cask]}"
+    if font == DEFAULTS[:font_family] && (brew = brew_cmd)
+      warn "Missing font '#{font}'. Installing via: brew install --cask #{DEFAULTS[:font_cask]}"
       if system(brew, "install", "--cask", DEFAULTS[:font_cask])
         return
       end
     end
-    abort "#{@font_family} not available to #{engine}. Install the font on your system, then rerun."
+    abort "#{font} not available to #{engine}. Install the font on your system, then rerun."
   end
 
   def ensure_npm_package(package)
