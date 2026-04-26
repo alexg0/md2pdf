@@ -285,3 +285,69 @@ write_doc() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning: mode pandoc-pdflatex does not support arbitrary system font selection"* ]]
 }
+
+@test "fully-consumed frontmatter leaves no empty YAML block in pandoc input" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-all-consumed.md"
+  write_doc "$input" "---" "fontsize: 11pt" "author: Jane Doe" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  # combined.md must not contain a bare `---\n\n---` empty YAML block,
+  # which pandoc reinterprets as a hr followed by a fresh YAML block start.
+  run python3 -c "import sys, re; sys.exit(0 if re.search(r'(?m)^---[ \t]*\n[ \t]*\n---[ \t]*$', open(sys.argv[1]).read()) is None else 1)" "$MD2PDF_PANDOC_INPUT_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "fully-consumed frontmatter with body hr and bold does not crash pandoc" {
+  has_pandoc_xelatex || skip "pandoc and xelatex not available"
+
+  local input="$TEST_TEMP_DIR/regression-empty-fm.md"
+  cat > "$input" <<'MD'
+---
+fontsize: 11pt
+author: Alexander Goldstein
+---
+# Title
+
+**Bold paragraph** that follows a horizontal rule below.
+
+---
+
+## Section
+
+| A | B |
+|---|---|
+| 1 | 2 |
+MD
+
+  run "$MD2PDF" --no-toc "$input" "$TEST_TEMP_DIR/regression.pdf"
+  [ "$status" -eq 0 ]
+  [ -s "$TEST_TEMP_DIR/regression.pdf" ]
+}
+
+@test "frontmatter with only one consumed key leaves no empty YAML block" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-one-consumed.md"
+  write_doc "$input" "---" "author: Solo" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  run python3 -c "import sys, re; sys.exit(0 if re.search(r'(?m)^---[ \t]*\n[ \t]*\n---[ \t]*$', open(sys.argv[1]).read()) is None else 1)" "$MD2PDF_PANDOC_INPUT_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "frontmatter with surviving keys still emits non-empty YAML block" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-mixed.md"
+  write_doc "$input" "---" "author: Solo" "toc: true" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  # toc must survive into the YAML block, author must be stripped.
+  grep -qx -- "toc: true" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -qx -- "author: Solo" "$MD2PDF_PANDOC_INPUT_LOG"
+}

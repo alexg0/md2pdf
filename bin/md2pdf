@@ -249,6 +249,11 @@ module RenderHelpers
       kept = prune_consumed_frontmatter_lines(body)
       kept = kept.gsub(/^(?:number_sections|number_section)([ \t]*:)/, "numbersections\\1")
 
+      # Drop the entire frontmatter block when nothing is left. A bare
+      # `---\n\n---` would otherwise mislead pandoc into treating a later
+      # body `---` as the start of a fresh YAML metadata block.
+      next "" if kept.strip.empty?
+
       "#{pre}#{kept}#{post}"
     end
   end
