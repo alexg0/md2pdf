@@ -9,7 +9,7 @@ class Md2pdf < Formula
   url      "https://github.com/alexg0/md2pdf/archive/refs/tags/v0.1.0.tar.gz"
   sha256   "0000000000000000000000000000000000000000000000000000000000000000"
   version  "0.1.0"
-  license  "GPL-3.0-or-later"
+  license  "MIT"
 
   depends_on "pandoc" => :recommended
   depends_on "ruby"
