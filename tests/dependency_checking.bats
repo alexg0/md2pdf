@@ -36,6 +36,7 @@ load test_helper
 }
 
 @test "--check-deps succeeds for pandoc-xelatex when pandoc and xelatex are installed" {
+  has_pandoc_xelatex || skip "pandoc and xelatex not available"
   run "$MD2PDF" --check-deps
   [ "$status" -eq 0 ]
   [[ "$output" == *"dependencies OK"* ]]
