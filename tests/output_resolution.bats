@@ -23,3 +23,11 @@ load test_helper
   [ "$status" -eq 0 ]
   [ -f "$subdir/doc.pdf" ]
 }
+
+@test "auto-creates parent directory of output path" {
+  local nested="$TEST_TEMP_DIR/out/nested/deeper"
+  [ ! -d "$nested" ]
+  run "$MD2PDF" "$FIXTURES_DIR/sample.md" "$nested/x.pdf"
+  [ "$status" -eq 0 ]
+  [ -f "$nested/x.pdf" ]
+}
