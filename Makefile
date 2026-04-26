@@ -5,7 +5,7 @@ DEV_BIN_DIR := $(DEV_PREFIX)/bin
 SRC_BIN := $(shell pwd)/bin/md2pdf
 VERSION_FILE := $(shell pwd)/VERSION
 
-.PHONY: install install-link install-dev uninstall uninstall-dev test check-deps install-prereqs release-tag help
+.PHONY: install install-link install-dev uninstall uninstall-dev test check-deps install-prereqs release-tag release help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
@@ -64,6 +64,18 @@ release-tag: ## Bump VERSION (VERSION=X.Y.Z), update baked constant, commit, tag
 	@git commit -m "Release v$(VERSION)"
 	@git tag -a "v$(VERSION)" -m "v$(VERSION)"
 	@echo "Tagged v$(VERSION). Push with: git push origin master && git push origin v$(VERSION)"
+
+release: ## Bump, commit, tag, and push origin master + tag (triggers Homebrew tap PR)
+	@git fetch --quiet origin master
+	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse origin/master)" ]; then \
+		echo "Refusing to release: HEAD is not at origin/master."; \
+		echo "  HEAD:           $$(git rev-parse --short HEAD) ($$(git rev-parse --abbrev-ref HEAD))"; \
+		echo "  origin/master:  $$(git rev-parse --short origin/master)"; \
+		exit 1; \
+	fi
+	@$(MAKE) release-tag VERSION=$(VERSION)
+	@git push origin HEAD:master
+	@git push origin "v$(VERSION)"
 
 install-prereqs: ## Install development prerequisites (bats-core)
 	@if command -v bats >/dev/null 2>&1; then \
