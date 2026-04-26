@@ -144,18 +144,40 @@ frontmatter blocks in subsequent inputs are stripped silently. For pandoc
 modes, the resource path includes every input file's directory, so embedded
 images resolve relative to whichever input referenced them.
 
-Pandoc modes also honor YAML frontmatter for table-of-contents and section
-numbering control:
+### Per-document options via YAML frontmatter
+
+Pandoc modes honor a YAML frontmatter block at the top of the markdown file
+for per-document overrides:
 
 ```yaml
 ---
-toc: false
-numbersections: false
+title:        # string, overrides H1 auto-detection
+author:       # string
+date:         # string, overrides file mtime
+margin:       # bare value like 0.75in or 20mm
+fontsize:     # e.g. 10pt
+font:         # e.g. Noto Serif
+page_numbers: # bool
+toc:          # bool
+numbersections: # bool
 ---
 ```
 
-`number_sections:` is accepted by `md2pdf` and normalized to pandoc's
-`numbersections:` metadata key before rendering.
+**Precedence:** CLI flag > frontmatter > built-in default.
+
+**Key aliases (normalized to canonical):**
+
+* `font_size` -> `fontsize`
+* `page-numbers`, `pageNumbers` -> `page_numbers`
+* `number_sections`, `number_section` -> `numbersections`
+
+Consumed keys (`title`, `author`, `date`, `margin`, `fontsize`, `font`,
+`page_numbers`) are stripped from the frontmatter before pandoc reads it, to
+avoid double-emission in the title block. `toc` and `numbersections` are
+preserved so pandoc reads them directly.
+
+Unrecognized frontmatter keys emit a warning to stderr but do not abort
+rendering.
 
 ### Author resolution
 

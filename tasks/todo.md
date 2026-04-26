@@ -133,3 +133,52 @@
 - `make test` passed: 106 tests.
 - `git diff --check` passed.
 - `./bin/md2pdf --help` shows `-a, --author AUTHOR`.
+
+## AG-6 (Linear): Frontmatter-driven per-doc options
+
+- [x] Add `frontmatter_options` parser returning `(options_hash, unknown_keys)`
+- [x] Add `prune_frontmatter` to strip consumed keys + normalize aliases
+- [x] Wire CLI > frontmatter > default precedence in `Md2Pdf#render`
+- [x] Strip `title`, `author`, `date`, `margin`, `fontsize`, `font`, `page_numbers` from frontmatter passed to pandoc
+- [x] Warn on unrecognized frontmatter keys
+- [x] Tests for title, author, margin, fontsize, font, page_numbers, date, aliases, unknown-key warning
+- [x] README updated with recognized keys, aliases, and precedence
+
+### Lessons
+
+- Ruby `Regexp` mixes named and unnamed capture groups badly — when a pattern contains
+  a named group (e.g., `(?<body>...)`), unnamed groups stop being indexable via
+  `m[1]`/`m[3]` and only the named ones populate. Fix: name *all* groups consistently
+  in the same pattern.
+
+## AG-6 Review Fixes: Frontmatter parser regressions
+
+- [x] Restate goal + acceptance criteria
+  - Goal: Add failing coverage for the three review findings, then fix frontmatter parsing and unsupported-option warnings.
+  - Acceptance: quoted `#` scalar values remain intact; nested YAML keys are not treated as top-level md2pdf options or stripped; frontmatter options unsupported by a selected renderer warn before rendering.
+- [x] Locate existing implementation / patterns
+  - `RenderHelpers.frontmatter_options` owns option extraction; `prune_frontmatter` owns metadata stripping; `warn_unmapped_options` only sees CLI state before render.
+- [x] Add regression tests for each reviewed issue and confirm they fail
+  - `bats tests/frontmatter_options.bats` failed on the three new tests before implementation.
+- [x] Implement smallest safe parser/warning fix
+  - Use `YAML.safe_load` for top-level option extraction; constrain pruning to top-level consumed keys only; emit unsupported frontmatter warnings after parsing.
+- [x] Run focused and full verification
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Working Notes
+
+- The current parser is regex/line based; reviewed failures are in scalar comment handling, top-level key detection, and warning timing.
+
+### Results
+
+- Added regression tests for quoted hash scalars, nested YAML metadata, nested `numbersections`, and unsupported frontmatter `font` under `pandoc-pdflatex`.
+- Replaced regex value extraction with YAML parsing for frontmatter options and kept nested metadata intact during pruning.
+- Unsupported frontmatter options now warn during render after frontmatter is available.
+- Verification:
+  - `ruby -c bin/md2pdf` — Syntax OK.
+  - `bats tests/frontmatter_options.bats tests/section_numbering.bats` — 33 tests passed.
+  - `bats tests/author_resolution.bats tests/frontmatter_options.bats tests/section_numbering.bats` — 50 tests passed after rebase.
+  - `bats tests/` — 143 tests passed after rebase.
+  - `git diff --check origin/master...HEAD` — passed.
+- Lessons: no new correction; these regressions were covered before fixing as requested.

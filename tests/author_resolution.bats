@@ -273,7 +273,8 @@ clear_author_env() {
   grep -q "^% $" "$MD2PDF_PANDOC_INPUT_LOG"
   ! grep -q "Frontmatter One" "$MD2PDF_PANDOC_INPUT_LOG"
   ! grep -q "Frontmatter Two" "$MD2PDF_PANDOC_INPUT_LOG"
-  grep -q "title: Frontmatter Title" "$MD2PDF_PANDOC_INPUT_LOG"
+  grep -q "^% Frontmatter Title$" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "title: Frontmatter Title" "$MD2PDF_PANDOC_INPUT_LOG"
   grep -q "toc: true" "$MD2PDF_PANDOC_INPUT_LOG"
 }
 
