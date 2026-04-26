@@ -78,7 +78,8 @@ Usage: md2pdf [options] input.md [input2.md ...] [output.pdf | -o output.pdf]
 Common options:
   --mode MODE         Renderer mode (default: pandoc-xelatex)
   -t TITLE            PDF title (default: first # H1 from file, or filename)
-  -a AUTHOR           Author line (default: none)
+  -a, --author AUTHOR Author line (default: frontmatter `author:`, then `git config user.name`, then env vars)
+  --no-author         Suppress author line entirely
   -o, --output PATH   Output PDF path (required when passing multiple inputs
                       unless the last positional ends in .pdf)
   --font FONT         Preferred body font where supported (default: Noto Serif)
@@ -155,6 +156,26 @@ numbersections: false
 
 `number_sections:` is accepted by `md2pdf` and normalized to pandoc's
 `numbersections:` metadata key before rendering.
+
+### Author resolution
+
+When `-a/--author` is not supplied on the CLI, `md2pdf` resolves the author line
+in this order:
+
+1. `-a AUTHOR` / `--author AUTHOR` on the command line
+2. `author:` in YAML frontmatter
+3. `GIT_AUTHOR_NAME` (env)
+4. `GIT_COMMITTER_NAME` (env)
+5. `git config user.name` (run from the input file's directory)
+6. `NAME`, then `MAILNAME` (env)
+7. No author line
+
+Steps 3–4 sit above `git config user.name` to mirror git's own override
+semantics: when `GIT_AUTHOR_NAME` is set, `git commit` ignores `user.name`,
+and `md2pdf` does the same.
+
+`--no-author` short-circuits the chain and produces a blank author line, which
+is useful in CI or when the document should appear unsigned.
 
 ## Mermaid diagrams
 
