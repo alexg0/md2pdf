@@ -19,6 +19,15 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$MD2PDF_PANDOC_ARGS_LOG"
 cp "$1" "$MD2PDF_PANDOC_INPUT_LOG"
+saved_args=("$@")
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--css" ]; then
+    shift
+    [ -n "$MD2PDF_PANDOC_CSS_LOG" ] && [ -f "$1" ] && cp "$1" "$MD2PDF_PANDOC_CSS_LOG"
+  fi
+  shift
+done
+set -- "${saved_args[@]}"
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     shift
@@ -34,6 +43,7 @@ SH
   export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
   export MD2PDF_PANDOC_ARGS_LOG="$TEST_TEMP_DIR/pandoc-args.txt"
   export MD2PDF_PANDOC_INPUT_LOG="$TEST_TEMP_DIR/pandoc-input.md"
+  export MD2PDF_PANDOC_CSS_LOG="$TEST_TEMP_DIR/pandoc-css.txt"
 }
 
 write_doc() {
@@ -284,4 +294,191 @@ write_doc() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning: mode pandoc-pdflatex does not support arbitrary system font selection"* ]]
+}
+
+@test "fully-consumed frontmatter leaves no empty YAML block in pandoc input" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-all-consumed.md"
+  write_doc "$input" "---" "fontsize: 11pt" "author: Jane Doe" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  # combined.md must not contain a bare `---\n\n---` empty YAML block,
+  # which pandoc reinterprets as a hr followed by a fresh YAML block start.
+  run python3 -c "import sys, re; sys.exit(0 if re.search(r'(?m)^---[ \t]*\n[ \t]*\n---[ \t]*$', open(sys.argv[1]).read()) is None else 1)" "$MD2PDF_PANDOC_INPUT_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "fully-consumed frontmatter with body hr and bold does not crash pandoc" {
+  has_pandoc_xelatex || skip "pandoc and xelatex not available"
+
+  local input="$TEST_TEMP_DIR/regression-empty-fm.md"
+  cat > "$input" <<'MD'
+---
+fontsize: 11pt
+author: Alexander Goldstein
+---
+# Title
+
+**Bold paragraph** that follows a horizontal rule below.
+
+---
+
+## Section
+
+| A | B |
+|---|---|
+| 1 | 2 |
+MD
+
+  run "$MD2PDF" --no-toc "$input" "$TEST_TEMP_DIR/regression.pdf"
+  [ "$status" -eq 0 ]
+  [ -s "$TEST_TEMP_DIR/regression.pdf" ]
+}
+
+@test "frontmatter with only one consumed key leaves no empty YAML block" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-one-consumed.md"
+  write_doc "$input" "---" "author: Solo" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  run python3 -c "import sys, re; sys.exit(0 if re.search(r'(?m)^---[ \t]*\n[ \t]*\n---[ \t]*$', open(sys.argv[1]).read()) is None else 1)" "$MD2PDF_PANDOC_INPUT_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "frontmatter with surviving keys still emits non-empty YAML block" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-mixed.md"
+  write_doc "$input" "---" "author: Solo" "toc: true" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  # toc must survive into the YAML block, author must be stripped.
+  grep -qx -- "toc: true" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -qx -- "author: Solo" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+# --- Widow/orphan protection ----------------------------------------------
+
+@test "default behavior does not add LaTeX widow/club penalties" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-default.md"
+  write_doc "$input" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  ! grep -q "widowpenalty" "$MD2PDF_PANDOC_ARGS_LOG"
+  ! grep -q "clubpenalty" "$MD2PDF_PANDOC_ARGS_LOG"
+}
+
+@test "--prevent-widows adds LaTeX widow/club penalties for xelatex" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-on.md"
+  write_doc "$input" "# Title" "" "Body"
+
+  run "$MD2PDF" --prevent-widows "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  grep -q '\\widowpenalty=10000' "$MD2PDF_PANDOC_ARGS_LOG"
+  grep -q '\\clubpenalty=10000' "$MD2PDF_PANDOC_ARGS_LOG"
+  grep -q '\\displaywidowpenalty=10000' "$MD2PDF_PANDOC_ARGS_LOG"
+}
+
+@test "--prevent-widows works for pdflatex too" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-pdflatex.md"
+  write_doc "$input" "# Title" "" "Body"
+
+  run "$MD2PDF" --mode pandoc-pdflatex --prevent-widows "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  grep -q '\\widowpenalty=10000' "$MD2PDF_PANDOC_ARGS_LOG"
+}
+
+@test "frontmatter prevent_widows: true enables protection" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-fm.md"
+  write_doc "$input" "---" "prevent_widows: true" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  grep -q '\\widowpenalty=10000' "$MD2PDF_PANDOC_ARGS_LOG"
+}
+
+@test "frontmatter alias prevent-widows is honored" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-fm-alias.md"
+  write_doc "$input" "---" "prevent-widows: true" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  grep -q '\\widowpenalty=10000' "$MD2PDF_PANDOC_ARGS_LOG"
+}
+
+@test "CLI --no-prevent-widows overrides frontmatter true" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-override.md"
+  write_doc "$input" "---" "prevent_widows: true" "---" "" "# Title" "" "Body"
+
+  run "$MD2PDF" --no-prevent-widows "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  ! grep -q "widowpenalty" "$MD2PDF_PANDOC_ARGS_LOG"
+}
+
+@test "prevent_widows is stripped from pandoc input" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/widow-stripped.md"
+  write_doc "$input" "---" "prevent_widows: true" "title: T" "---" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  ! grep -q "^prevent_widows:" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+@test "weasyprint mode embeds CSS widows/orphans rules when --prevent-widows" {
+  setup_fake_pandoc
+  # weasyprint binary stub so dep check passes
+  cat > "$TEST_TEMP_DIR/fake-bin/weasyprint" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$TEST_TEMP_DIR/fake-bin/weasyprint"
+
+  local input="$TEST_TEMP_DIR/widow-css.md"
+  write_doc "$input" "# Title" "" "Body"
+
+  run "$MD2PDF" --mode pandoc-weasyprint --prevent-widows "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  [ -f "$MD2PDF_PANDOC_CSS_LOG" ]
+  grep -q "widows" "$MD2PDF_PANDOC_CSS_LOG"
+  grep -q "orphans" "$MD2PDF_PANDOC_CSS_LOG"
+}
+
+@test "weasyprint mode without --prevent-widows omits widows/orphans CSS" {
+  setup_fake_pandoc
+  cat > "$TEST_TEMP_DIR/fake-bin/weasyprint" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$TEST_TEMP_DIR/fake-bin/weasyprint"
+
+  local input="$TEST_TEMP_DIR/widow-css-off.md"
+  write_doc "$input" "# Title" "" "Body"
+
+  run "$MD2PDF" --mode pandoc-weasyprint "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  [ -f "$MD2PDF_PANDOC_CSS_LOG" ]
+  ! grep -q "widows" "$MD2PDF_PANDOC_CSS_LOG"
+  ! grep -q "orphans" "$MD2PDF_PANDOC_CSS_LOG"
 }

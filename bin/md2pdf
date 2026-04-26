@@ -47,6 +47,7 @@ DEFAULTS = {
   fontsize: "11pt",
   toc: true,
   page_numbers: true,
+  prevent_widows: false,
   mode: "pandoc-xelatex",
 }.freeze
 
@@ -54,7 +55,7 @@ MERMAID_NPM_PACKAGE = "@mermaid-js/mermaid-cli"
 MERMAID_BIN = "mmdc"
 
 # Frontmatter keys md2pdf understands (canonical names).
-FRONTMATTER_RECOGNIZED = %w[title author date margin fontsize font page_numbers toc numbersections].freeze
+FRONTMATTER_RECOGNIZED = %w[title author date margin fontsize font page_numbers toc numbersections prevent_widows].freeze
 
 # Aliased frontmatter keys mapped to their canonical name.
 FRONTMATTER_ALIASES = {
@@ -63,11 +64,13 @@ FRONTMATTER_ALIASES = {
   "pageNumbers" => "page_numbers",
   "number_sections" => "numbersections",
   "number_section" => "numbersections",
+  "prevent-widows" => "prevent_widows",
+  "preventWidows" => "prevent_widows",
 }.freeze
 
 # Keys md2pdf consumes itself (passed to renderers via flags), so they are stripped
 # from the frontmatter before pandoc reads it to avoid double-emission.
-FRONTMATTER_CONSUMED = %w[title author date margin fontsize font page_numbers].freeze
+FRONTMATTER_CONSUMED = %w[title author date margin fontsize font page_numbers prevent_widows].freeze
 
 # --- Mermaid preprocessor ---
 #
@@ -175,6 +178,15 @@ module RenderHelpers
       css << %(  @bottom-center { content: counter(page); font-family: "#{ctx[:font]}", serif; font-size: 9pt; }\n)
     end
     css << "}\n" << font_css(ctx)
+    css << widow_css if ctx[:prevent_widows]
+    css
+  end
+
+  # CSS widow/orphan protection. `widows` = min lines at top of page,
+  # `orphans` = min lines at bottom. Setting both to 3 forbids one- or
+  # two-line stragglers across page breaks (CSS spec default is 2).
+  def widow_css
+    "p, li, blockquote { widows: 3; orphans: 3; }\n"
   end
 
   def puppeteer_footer_html(ctx)
@@ -224,7 +236,7 @@ module RenderHelpers
       end
 
       case canonical
-      when "page_numbers", "toc", "numbersections"
+      when "page_numbers", "toc", "numbersections", "prevent_widows"
         bool = parse_frontmatter_bool(value)
         options[canonical.to_sym] = bool unless bool.nil?
       else
@@ -248,6 +260,11 @@ module RenderHelpers
 
       kept = prune_consumed_frontmatter_lines(body)
       kept = kept.gsub(/^(?:number_sections|number_section)([ \t]*:)/, "numbersections\\1")
+
+      # Drop the entire frontmatter block when nothing is left. A bare
+      # `---\n\n---` would otherwise mislead pandoc into treating a later
+      # body `---` as the start of a fresh YAML metadata block.
+      next "" if kept.strip.empty?
 
       "#{pre}#{kept}#{post}"
     end
@@ -352,6 +369,9 @@ PANDOC_RENDER = ->(ctx) do
   cmd << "--toc" if ctx[:toc]
   if %w[xelatex lualatex pdflatex].include?(engine)
     cmd += ["-V", "pagestyle:#{ctx[:page_numbers] ? "plain" : "empty"}"]
+    if ctx[:prevent_widows]
+      cmd += ["-V", "header-includes:\\widowpenalty=10000 \\clubpenalty=10000 \\displaywidowpenalty=10000"]
+    end
   end
 
   [cmd]
@@ -441,7 +461,7 @@ MODES = {
     label: "Pandoc + XeLaTeX", runtime: "pandoc, xelatex", alias_tag: " [alias: latex]",
     note: "Default mode. Pandoc + XeLaTeX with title block, margin/font/TOC support. 'latex' is an alias.",
     engine: "xelatex", font_check: true,
-    supports: %i[title author margin fontsize font toc page_numbers mermaid],
+    supports: %i[title author margin fontsize font toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc xelatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif] },
     binary: { system: "pandoc" },
@@ -451,7 +471,7 @@ MODES = {
     label: "Pandoc + LuaLaTeX", runtime: "pandoc, lualatex",
     note: "Pandoc + LuaLaTeX. Unicode font support like XeLaTeX, useful for comparing TeX engines.",
     engine: "lualatex", font_check: true,
-    supports: %i[title author margin fontsize font toc page_numbers mermaid],
+    supports: %i[title author margin fontsize font toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc lualatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif] },
     binary: { system: "pandoc" },
@@ -461,7 +481,7 @@ MODES = {
     label: "Pandoc + pdfLaTeX", runtime: "pandoc, pdflatex",
     note: "Pandoc + pdfLaTeX. Best with ASCII content; Unicode and custom fonts are limited.",
     engine: "pdflatex",
-    supports: %i[title author margin fontsize toc page_numbers mermaid],
+    supports: %i[title author margin fontsize toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc pdflatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex] },
     binary: { system: "pandoc" },
@@ -471,7 +491,7 @@ MODES = {
     label: "Pandoc + wkhtmltopdf", runtime: "pandoc, wkhtmltopdf",
     note: "Pandoc HTML pipeline + wkhtmltopdf. Margin/font via CSS. Author metadata not mapped.",
     engine: "wkhtmltopdf",
-    supports: %i[title margin fontsize font toc page_numbers mermaid],
+    supports: %i[title margin fontsize font toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc wkhtmltopdf] },
     install: { require: { "pandoc" => "brew install pandoc", "wkhtmltopdf" => "install via your preferred package manager" } },
     binary: { system: "pandoc" },
@@ -481,7 +501,7 @@ MODES = {
     label: "Pandoc + WeasyPrint", runtime: "pandoc, weasyprint",
     note: "Pandoc HTML pipeline + WeasyPrint. Margin/font via CSS. Author metadata not mapped.",
     engine: "weasyprint",
-    supports: %i[title margin fontsize font toc page_numbers mermaid],
+    supports: %i[title margin fontsize font toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc weasyprint] },
     install: { brew: %w[pandoc weasyprint] },
     binary: { system: "pandoc" },
@@ -547,6 +567,7 @@ class Md2Pdf
     @toc = nil
     @number_sections = nil
     @page_numbers = nil
+    @prevent_widows = nil
     @mermaid = true
     @title = nil
     @author = nil
@@ -590,6 +611,7 @@ class Md2Pdf
       opts.on("--[no-]toc", "Table of contents (default: on unless frontmatter sets toc)") { |v| @toc = v }
       opts.on("--[no-]number-sections", "Number section headings (default: on unless frontmatter or numbered H2 controls it)") { |v| @number_sections = v }
       opts.on("--[no-]page-numbers", "Page numbers (default: on)") { |v| @page_numbers = v }
+      opts.on("--[no-]prevent-widows", "Forbid widow/orphan lines across page breaks (default: off)") { |v| @prevent_widows = v }
       opts.on("--[no-]mermaid", "Pre-render fenced ```mermaid blocks via mmdc (default: on)") { |v| @mermaid = v }
       opts.on("--list-modes", "List modes and install status") { @action = :list_modes }
       opts.on("--check-deps", "Check deps for selected mode") { @action = :check_deps }
@@ -697,6 +719,7 @@ class Md2Pdf
       toc: !@toc.nil? ? @toc : (fm_options.key?(:toc) ? fm_options[:toc] : DEFAULTS[:toc]),
       toc_override: @toc,
       page_numbers: !@page_numbers.nil? ? @page_numbers : (fm_options.key?(:page_numbers) ? fm_options[:page_numbers] : DEFAULTS[:page_numbers]),
+      prevent_widows: !@prevent_widows.nil? ? @prevent_widows : (fm_options.key?(:prevent_widows) ? fm_options[:prevent_widows] : DEFAULTS[:prevent_widows]),
       engine: cfg[:engine],
       number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
       number_sections_override: @number_sections,
