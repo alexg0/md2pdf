@@ -205,6 +205,12 @@ module RenderHelpers
     end
   end
 
+  def remove_frontmatter_key(content, key)
+    content.sub(/\A((?:\uFEFF)?---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\z))/m) do |frontmatter|
+      remove_yaml_key(frontmatter, key)
+    end
+  end
+
   def frontmatter_bool(content, key)
     body = frontmatter_body(content)
     return yield unless body
@@ -218,6 +224,59 @@ module RenderHelpers
     end
 
     yield
+  end
+
+  def frontmatter_string(content, key)
+    body = frontmatter_body(content)
+    return nil unless body
+
+    body.each_line do |line|
+      next unless (match = line.match(/^[ \t]*#{Regexp.escape(key)}[ \t]*:[ \t]*(?<value>[^\r\n]*)/))
+
+      value = match[:value].strip
+      next if value.empty?
+
+      if (quoted = value.match(/\A"(?<inner>.*)"\z/) || value.match(/\A'(?<inner>.*)'\z/))
+        return quoted[:inner]
+      end
+
+      value = value.sub(/[ \t]+#.*\z/, "").rstrip
+      return value unless value.empty?
+    end
+
+    nil
+  end
+
+  def remove_yaml_key(frontmatter, key)
+    lines = frontmatter.lines
+    output = []
+    skipping = false
+    key_indent = 0
+
+    lines.each_with_index do |line, index|
+      if index.zero? || line.match?(/\A---[ \t]*(?:\r?\n|\z)/)
+        output << line
+        skipping = false
+        next
+      end
+
+      if skipping
+        indent = line[/\A[ \t]*/].length
+        next if line.strip.empty? || indent > key_indent || (indent == key_indent && line.lstrip.start_with?("-"))
+
+        skipping = false
+      end
+
+      if (match = line.match(/\A(?<indent>[ \t]*)#{Regexp.escape(key)}[ \t]*:/))
+        key_indent = match[:indent].length
+        skipping = true
+        next
+      end
+
+      output << line
+    end
+
+    output.join
   end
 
   def frontmatter_controls_numbering?(content)
@@ -251,7 +310,9 @@ PANDOC_RENDER = ->(ctx) do
 
   # Preprocess: title block + unicode normalization
   content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  content << RenderHelpers.normalize_number_sections_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
+  source_content = File.read(ctx[:input], encoding: "utf-8")
+  source_content = RenderHelpers.remove_frontmatter_key(source_content, "author") if ctx[:author_overrides_frontmatter]
+  content << RenderHelpers.normalize_number_sections_frontmatter(source_content)
   LATEX_UNICODE.each { |k, v| content.gsub!(k, v) }
   PDFLATEX_EXTRA.each { |k, v| content.gsub!(k, v) } if engine == "pdflatex"
   tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
@@ -481,6 +542,8 @@ class Md2Pdf
     @font_explicit = false
     @title = nil
     @author = nil
+    @author_explicit = false
+    @no_author = false
     @action = :render
     @input_files = []
     @output_file = nil
@@ -510,7 +573,8 @@ class Md2Pdf
       opts.banner = "Usage: #{$PROGRAM_NAME} [options] input.md [input2.md ...] [output.pdf | -o output.pdf]"
       opts.on("--mode MODE", "Renderer mode (default: #{DEFAULTS[:mode]})") { |v| @mode = v }
       opts.on("-t TITLE", "PDF title") { |v| @title = v }
-      opts.on("-a AUTHOR", "Author line") { |v| @author = v }
+      opts.on("-a", "--author AUTHOR", "Author line (default: frontmatter author, then git config user.name)") { |v| @author = v; @author_explicit = true }
+      opts.on("--no-author", "Suppress author line entirely (overrides frontmatter and git fallback)") { @no_author = true }
       opts.on("-o PATH", "--output PATH", "Output PDF path (required when passing multiple inputs)") { |v| @output_file = v }
       opts.on("--font FONT", "Body font") { |v| @font_family = v; @font_explicit = true }
       opts.on("-m MARGIN", "Page margin (default: #{DEFAULTS[:margin]})") { |v| @margin = v }
@@ -610,7 +674,7 @@ class Md2Pdf
     ctx = {
       binary: binary, input: input_path, output: resolved, tmpdir: tmpdir,
       source_dir: File.dirname(File.expand_path(@input_files.first)),
-      title: detect_title, author: @author, date: latex_date,
+      title: detect_title, author: resolve_author(source_content), date: latex_date,
       margin: @margin, fontsize: @fontsize, font: @font_family,
       toc: RenderHelpers.resolve_toc(source_content, @toc, DEFAULTS[:toc]),
       toc_override: @toc,
@@ -618,6 +682,7 @@ class Md2Pdf
       engine: cfg[:engine],
       number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
       number_sections_override: @number_sections,
+      author_overrides_frontmatter: @author_explicit || @no_author,
       resource_path: build_resource_path,
     }
 
@@ -708,7 +773,7 @@ class Md2Pdf
   def warn_unmapped_options
     supports = cfg[:supports]
     @warnings << "mode #{@mode} ignores -t/--title" if @title && !supports.include?(:title)
-    @warnings << "mode #{@mode} ignores -a/--author" if @author && !supports.include?(:author)
+    @warnings << "mode #{@mode} ignores -a/--author" if @author_explicit && !supports.include?(:author)
     @warnings << "mode #{@mode} ignores -m/--margin" if @margin != DEFAULTS[:margin] && !supports.include?(:margin)
     @warnings << "mode #{@mode} ignores -s/--size" if @fontsize != DEFAULTS[:fontsize] && !supports.include?(:fontsize)
     @warnings << "mode #{@mode} does not support arbitrary system font selection" if @font_explicit && !supports.include?(:font)
@@ -728,6 +793,51 @@ class Md2Pdf
       return line.sub(/^#\s+/, "").strip if line.start_with?("# ")
     end
     File.basename(first, ".*")
+  end
+
+  # Author precedence (matches git's own override semantics for GIT_*_NAME):
+  #   --no-author          -> nil (suppress)
+  #   CLI -a               -> that
+  #   frontmatter author:  -> that
+  #   GIT_AUTHOR_NAME      -> that
+  #   GIT_COMMITTER_NAME   -> that
+  #   git config user.name -> that (run from input file's directory)
+  #   NAME, MAILNAME       -> first non-empty
+  #   else                 -> nil
+  def resolve_author(source_content)
+    return nil if @no_author
+    return @author if @author
+
+    fm = RenderHelpers.frontmatter_string(source_content, "author")
+    return fm if fm
+
+    git_env = env_value("GIT_AUTHOR_NAME") || env_value("GIT_COMMITTER_NAME")
+    return git_env if git_env
+
+    git_name = git_user_name
+    return git_name if git_name
+
+    env_value("NAME") || env_value("MAILNAME")
+  end
+
+  def git_user_name
+    return nil unless have_cmd("git")
+
+    dir = File.dirname(File.expand_path(@input_files.first))
+    output = IO.popen(["git", "-C", dir, "config", "user.name"], err: File::NULL, &:read)
+    return nil unless $?.success?
+
+    name = output.strip
+    name.empty? ? nil : name
+  rescue StandardError
+    nil
+  end
+
+  def env_value(key)
+    value = ENV[key]
+    return nil if value.nil?
+    stripped = value.strip
+    stripped.empty? ? nil : stripped
   end
 
   def resolve_output

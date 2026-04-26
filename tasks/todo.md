@@ -109,3 +109,27 @@
   - `bats tests/` — 96 tests passed.
   - `git diff --check` — passed.
 - Lessons: none; the regressions were caught by review before merge, so no new prevention rule was needed beyond the added tests.
+
+## Review Fix Follow-up
+
+- [x] Restate goal + acceptance criteria
+  - Goal: Address review findings for author precedence and README/CLI mismatch.
+  - Acceptance: `--author` is accepted as an alias for `-a`; explicit author and `--no-author` override YAML `author:` in Pandoc-mode outputs.
+- [x] Locate existing implementation / patterns
+  - Author metadata is resolved in `Md2Pdf#resolve_author`; Pandoc temp markdown is built in `PANDOC_RENDER`.
+- [x] Implement smallest safe slice
+  - Added `--author` as an alias for `-a`.
+  - Removed top-level YAML `author:` from Pandoc temp input when CLI author or `--no-author` explicitly overrides source metadata.
+- [x] Add/adjust tests
+  - Added `--author` alias coverage.
+  - Added assertions that explicit override/suppression removes simple and multiline frontmatter author metadata from the Pandoc input.
+- [x] Run verification (syntax, diff check, focused tests, full test suite)
+- [x] Summarize changes + verification story
+
+## Review Fix Results
+
+- `ruby -c bin/md2pdf` passed.
+- `bats tests/author_resolution.bats` passed: 17 tests.
+- `make test` passed: 106 tests.
+- `git diff --check` passed.
+- `./bin/md2pdf --help` shows `-a, --author AUTHOR`.
