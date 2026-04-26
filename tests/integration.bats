@@ -2,10 +2,6 @@
 
 load test_helper
 
-has_pandoc_xelatex() {
-  command -v pandoc >/dev/null 2>&1 && command -v xelatex >/dev/null 2>&1
-}
-
 @test "end-to-end PDF generation with pandoc-xelatex" {
   has_pandoc_xelatex || skip "pandoc and xelatex not available"
 

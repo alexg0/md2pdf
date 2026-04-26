@@ -6,6 +6,10 @@ MD2PDF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/md2pdf"
 # Directory containing test fixtures
 FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/fixtures" && pwd)"
 
+has_pandoc_xelatex() {
+  command -v pandoc >/dev/null 2>&1 && command -v xelatex >/dev/null 2>&1
+}
+
 setup() {
   TEST_TEMP_DIR="$(mktemp -d)"
   export MD2PDF_TOOL_HOME="$TEST_TEMP_DIR/tool_home"
