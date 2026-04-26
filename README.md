@@ -249,15 +249,25 @@ Unit tests run without any rendering engine installed. Integration tests automat
 ## Releasing
 
 ```bash
+make release VERSION=0.2.0
+```
+
+`release` runs `release-tag` (writes the new version to `VERSION` and to the
+`MD2PDF_VERSION` constant in `bin/md2pdf`, commits, and creates an annotated tag),
+then pushes `HEAD` to `origin/master` and pushes the new tag. It refuses to run
+unless `HEAD` is exactly at `origin/master`, so you can release from any local
+branch (including a Conductor workspace branch) as long as it's at the tip of
+master. To do those steps separately:
+
+```bash
 make release-tag VERSION=0.2.0
 git push origin master && git push origin v0.2.0
 ```
 
-`release-tag` writes the new version to `VERSION` and to the `MD2PDF_VERSION`
-constant in `bin/md2pdf`, commits, and creates an annotated tag. Pushing the tag
-triggers `.github/workflows/release.yml`, which computes the release tarball's
-sha256 and opens a PR against [`alexg0/homebrew-tap`](https://github.com/alexg0/homebrew-tap)
-updating `Formula/md2pdf.rb`.
+Pushing the tag triggers `.github/workflows/release.yml`, which computes the
+release tarball's sha256 and opens a PR against
+[`alexg0/homebrew-tap`](https://github.com/alexg0/homebrew-tap) updating
+`Formula/md2pdf.rb`.
 
 Prerequisite (one-time): create the `alexg0/homebrew-tap` repo, seed it with
 [`packaging/homebrew/md2pdf.rb`](packaging/homebrew/md2pdf.rb), and add a
