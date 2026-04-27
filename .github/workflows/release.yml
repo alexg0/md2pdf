@@ -24,7 +24,19 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           version="${tag#v}"
           tarball_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${tag}.tar.gz"
-          curl -fsSL -o release.tar.gz "$tarball_url"
+          # Retry: GitHub occasionally 502s the tag tarball in the seconds right after a tag is pushed.
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL -o release.tar.gz "$tarball_url"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::Failed to download $tarball_url after 5 attempts"
+              exit 1
+            fi
+            sleep_s=$((attempt * 5))
+            echo "curl failed (attempt $attempt/5), retrying in ${sleep_s}s..."
+            sleep "$sleep_s"
+          done
           sha256="$(shasum -a 256 release.tar.gz | awk '{print $1}')"
           echo "tag=$tag"             >> "$GITHUB_OUTPUT"
           echo "version=$version"     >> "$GITHUB_OUTPUT"
@@ -64,7 +76,7 @@ jobs:
 
       - name: Open pull request
         id: cpr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
