@@ -1,3 +1,71 @@
+## Unknown Frontmatter PDF Error
+
+- [x] Restate goal + acceptance criteria
+  - Goal: Rendering PDFs should not fail when the input markdown contains frontmatter keys md2pdf does not recognize, such as Obsidian `tags`.
+  - Acceptance: unknown frontmatter keys still warn; they are not passed through to pandoc; known pandoc metadata like `toc` and `numbersections` still survives; consumed md2pdf keys are still stripped.
+- [x] Locate existing implementation / patterns
+- [x] Design: minimal approach + key decisions
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification (lint/tests/build/manual repro)
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Working Notes
+
+- Exact sample file rendered successfully with this checkout and `/opt/homebrew/bin/md2pdf`, so this branch may already avoid the reported crash for that specific document.
+- The remaining risk is that unknown app-specific YAML is preserved into the generated pandoc input, where pandoc/LaTeX can interpret it unexpectedly.
+- Frontmatter pruning is now whitelist-based: only recognized, non-consumed pandoc metadata (`toc`, `numbersections`) survives into generated pandoc input.
+
+### Results
+
+- Replaced line-based consumed-key pruning with YAML parsing and re-emission of only renderer-relevant metadata.
+- Unknown top-level frontmatter keys still warn, but are stripped before pandoc sees them.
+- Obsidian-style `tags:` plus consumed `date:` frontmatter now leaves no YAML block in pandoc input.
+- Updated README frontmatter semantics.
+- Verification:
+  - `ruby -c bin/md2pdf` — Syntax OK.
+  - `bats tests/frontmatter_options.bats` — 35 tests passed.
+  - `bats tests/frontmatter_options.bats tests/section_numbering.bats` — 47 tests passed.
+  - `bats tests/multi_input.bats` — 6 tests passed.
+  - `make test` — 167 tests passed.
+  - `git diff --check` — passed.
+  - Manual render of the provided Obsidian file produced `/tmp/md2pdf-unknown-frontmatter-after.pdf` and warned only for `tags`.
+- Lessons: none; no user correction or postmortem was needed.
+
+## Unknown Frontmatter Warning Controls
+
+- [x] Restate goal + acceptance criteria
+  - Goal: Let users suppress unknown frontmatter warnings globally, and provide an Obsidian-friendly mode that suppresses common Obsidian metadata warnings.
+  - Acceptance: default behavior still warns for arbitrary unknown keys; `--no-warn-unknown-frontmatter` suppresses all unknown-key warnings; `--obsidian` suppresses warnings for common Obsidian keys while preserving warnings for other unknown keys; unknown keys remain stripped before pandoc.
+- [x] Locate existing implementation / patterns
+- [x] Design: minimal approach + key decisions
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification (lint/tests/build/manual repro)
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Working Notes
+
+- Unknown-key warnings are emitted in `Md2Pdf#render` after `RenderHelpers.frontmatter_options`.
+- Obsidian frontmatter keys to treat as expected foreign metadata: `tags`, `aliases`, `cssclasses`, `cssclass`, `publish`, `permalink`.
+
+### Results
+
+- Added `--[no-]warn-unknown-frontmatter`, defaulting to warning.
+- Added `--obsidian`, which suppresses warnings for common Obsidian metadata keys while still warning for unrelated unknown keys.
+- Unknown frontmatter keys remain stripped before pandoc regardless of warning settings.
+- README usage and frontmatter docs updated.
+- Verification:
+  - `ruby -c bin/md2pdf` — Syntax OK.
+  - `bats tests/frontmatter_options.bats` — 37 tests passed.
+  - `make test` — 169 tests passed.
+  - `git diff --check` — passed.
+  - `./bin/md2pdf --help | rg -- '--\\[no-\\]warn-unknown-frontmatter|--obsidian'` showed both flags.
+  - Manual render of the provided Obsidian file with `--obsidian` produced `/tmp/md2pdf-obsidian.pdf` without the `tags` warning.
+- Lessons: none; no correction or postmortem was needed.
+
 - [x] Restate goal + acceptance criteria
   - Goal: Do not add pandoc's automatic `--number-sections` flag when the source already signals section numbering.
   - Acceptance: `--number-sections` is omitted when YAML frontmatter includes `numbersections`, `number_section`, or `number_sections`, or when an existing level-2 heading starts with a number; default behavior remains numbered.

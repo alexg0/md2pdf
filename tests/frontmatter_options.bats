@@ -238,6 +238,36 @@ write_doc() {
   [[ "$output" == *"warning: unrecognized frontmatter key: bogus_key"* ]]
 }
 
+@test "--no-warn-unknown-frontmatter suppresses unknown frontmatter warnings" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-unknown-quiet.md"
+  write_doc "$input" "---" "bogus_key: value" "---" "" "Body"
+
+  run "$MD2PDF" --no-warn-unknown-frontmatter "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"warning: unrecognized frontmatter key: bogus_key"* ]]
+  ! grep -q "^bogus_key:" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+@test "--obsidian suppresses common Obsidian frontmatter warnings only" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-obsidian.md"
+  write_doc "$input" "---" "tags:" "  - eligo" "aliases:" "  - Meeting note" "cssclasses:" "  - wide-page" "bogus_key: value" "---" "" "Body"
+
+  run "$MD2PDF" --obsidian "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"warning: unrecognized frontmatter key: tags"* ]]
+  [[ "$output" != *"warning: unrecognized frontmatter key: aliases"* ]]
+  [[ "$output" != *"warning: unrecognized frontmatter key: cssclasses"* ]]
+  [[ "$output" == *"warning: unrecognized frontmatter key: bogus_key"* ]]
+  ! grep -q "^tags:" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "^aliases:" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "^cssclasses:" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "^bogus_key:" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
 @test "unknown frontmatter key does not abort rendering" {
   setup_fake_pandoc
   local input="$TEST_TEMP_DIR/fm-unknown-render.md"
@@ -247,6 +277,21 @@ write_doc() {
 
   [ "$status" -eq 0 ]
   [ -f "$TEST_TEMP_DIR/out.pdf" ]
+  ! grep -q "^bogus:" "$MD2PDF_PANDOC_INPUT_LOG"
+}
+
+@test "unknown list frontmatter with consumed keys is stripped before pandoc" {
+  setup_fake_pandoc
+  local input="$TEST_TEMP_DIR/fm-unknown-list.md"
+  write_doc "$input" "---" "tags:" "  - eligo" "  - meeting-notes" "date: 2026-05-19" "---" "" "## Meeting summary" "" "Body"
+
+  run "$MD2PDF" "$input" "$TEST_TEMP_DIR/out.pdf"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: unrecognized frontmatter key: tags"* ]]
+  ! grep -q "^tags:" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "meeting-notes" "$MD2PDF_PANDOC_INPUT_LOG"
+  ! grep -q "^date:" "$MD2PDF_PANDOC_INPUT_LOG"
 }
 
 @test "quoted frontmatter string values are unwrapped" {
@@ -282,7 +327,8 @@ write_doc() {
   [ "$status" -eq 0 ]
   grep -q "^% H1 Heading$" "$MD2PDF_PANDOC_INPUT_LOG"
   ! grep -q "^% Nested Title$" "$MD2PDF_PANDOC_INPUT_LOG"
-  grep -qx -- "  title: Nested Title" "$MD2PDF_PANDOC_INPUT_LOG"
+  [[ "$output" == *"warning: unrecognized frontmatter key: project"* ]]
+  ! grep -q "Nested Title" "$MD2PDF_PANDOC_INPUT_LOG"
 }
 
 @test "frontmatter options unsupported by selected mode emit warnings" {

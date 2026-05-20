@@ -100,7 +100,8 @@ assert_arg_absent() {
 
   [ "$status" -eq 0 ]
   assert_arg_present "--number-sections"
-  grep -qx -- "  numbersections: false" "$MD2PDF_PANDOC_INPUT_LOG"
+  [[ "$output" == *"warning: unrecognized frontmatter key: project"* ]]
+  ! grep -q "numbersections: false" "$MD2PDF_PANDOC_INPUT_LOG"
 }
 
 @test "--no-number-sections disables default automatic section numbering" {
