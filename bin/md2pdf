@@ -38,7 +38,7 @@ require "yaml"
 # and returns an array of command arrays to execute in order.
 # ---------------------------------------------------------------------------
 
-MD2PDF_VERSION = "0.2.0"
+MD2PDF_VERSION = "0.2.1"
 
 DEFAULTS = {
   font_family: "Noto Serif",
@@ -77,6 +77,8 @@ FRONTMATTER_ALIASES = {
 # Keys md2pdf consumes itself (passed to renderers via flags), so they are stripped
 # from the frontmatter before pandoc reads it to avoid double-emission.
 FRONTMATTER_CONSUMED = %w[title author date margin fontsize font page_numbers prevent_widows].freeze
+
+OBSIDIAN_FRONTMATTER_KEYS = %w[tags aliases cssclasses cssclass publish permalink].freeze
 
 # --- Mermaid preprocessor ---
 #
@@ -255,17 +257,15 @@ module RenderHelpers
     [{}, []]
   end
 
-  # Rewrite the leading frontmatter block: drop lines for keys md2pdf consumes,
-  # and normalize remaining alias keys (number_sections -> numbersections) so
-  # pandoc reads its expected metadata names.
+  # Rewrite the leading frontmatter block: pass only metadata pandoc should
+  # still read after md2pdf has consumed its own options.
   def prune_frontmatter(content)
     content.sub(/\A(?<pre>(?:﻿)?---[ \t]*\r?\n)(?<body>.*?)(?<post>\r?\n---[ \t]*(?:\r?\n|\z))/m) do
       pre = Regexp.last_match(:pre)
       body = Regexp.last_match(:body)
       post = Regexp.last_match(:post)
 
-      kept = prune_consumed_frontmatter_lines(body)
-      kept = kept.gsub(/^(?:number_sections|number_section)([ \t]*:)/, "numbersections\\1")
+      kept = pruned_frontmatter_yaml(body)
 
       # Drop the entire frontmatter block when nothing is left. A bare
       # `---\n\n---` would otherwise mislead pandoc into treating a later
@@ -276,32 +276,30 @@ module RenderHelpers
     end
   end
 
-  def prune_consumed_frontmatter_lines(body)
-    output = []
-    skipping = false
-    key_indent = 0
+  def pruned_frontmatter_yaml(body)
+    data = YAML.safe_load(body, permitted_classes: [Date, Time], aliases: false)
+    return "" unless data.is_a?(Hash)
 
-    body.each_line do |line|
-      if skipping
-        indent = line[/\A[ \t]*/].length
-        next if line.strip.empty? || indent > key_indent || (indent == key_indent && line.lstrip.start_with?("-"))
+    kept = {}
+    data.each do |key, value|
+      canonical = FRONTMATTER_ALIASES[key.to_s] || key.to_s
+      next unless FRONTMATTER_RECOGNIZED.include?(canonical)
+      next if FRONTMATTER_CONSUMED.include?(canonical)
 
-        skipping = false
+      case canonical
+      when "toc", "numbersections"
+        bool = parse_frontmatter_bool(value)
+        kept[canonical] = bool unless bool.nil?
+      else
+        kept[canonical] = value
       end
-
-      if (m = line.match(/\A(?<key>[A-Za-z][A-Za-z0-9_-]*)[ \t]*:/))
-        canonical = FRONTMATTER_ALIASES[m[:key]] || m[:key]
-        if FRONTMATTER_CONSUMED.include?(canonical)
-          key_indent = 0
-          skipping = true
-          next
-        end
-      end
-
-      output << line
     end
 
-    output.join
+    return "" if kept.empty?
+
+    YAML.dump(kept).sub(/\A---[ \t]*\r?\n/, "")
+  rescue Psych::Exception
+    ""
   end
 
   def parse_frontmatter_bool(value)
@@ -619,6 +617,8 @@ class Md2Pdf
     @input_files = []
     @output_file = nil
     @warnings = []
+    @warn_unknown_frontmatter = true
+    @obsidian = false
     @temp_dirs = []
     @script_dir = File.dirname(File.realpath(__FILE__))
     @tool_home = ENV["MD2PDF_TOOL_HOME"] || File.join(ENV.fetch("XDG_DATA_HOME", File.join(Dir.home, ".local", "share")), "md2pdf")
@@ -655,6 +655,8 @@ class Md2Pdf
       opts.on("--[no-]page-numbers", "Page numbers (default: on)") { |v| @page_numbers = v }
       opts.on("--[no-]prevent-widows", "Forbid widow/orphan lines across page breaks (default: off)") { |v| @prevent_widows = v }
       opts.on("--[no-]mermaid", "Pre-render fenced ```mermaid blocks via mmdc (default: on)") { |v| @mermaid = v }
+      opts.on("--[no-]warn-unknown-frontmatter", "Warn about unrecognized YAML frontmatter keys (default: on)") { |v| @warn_unknown_frontmatter = v }
+      opts.on("--obsidian", "Suppress warnings for common Obsidian frontmatter keys") { @obsidian = true }
       opts.on("--reference-doc PATH", "DOCX template for pandoc-docx mode (controls fonts, margins, styles)") { |v| @reference_doc = v }
       opts.on("--list-modes", "List modes and install status") { @action = :list_modes }
       opts.on("--check-deps", "Check deps for selected mode") { @action = :check_deps }
@@ -743,7 +745,7 @@ class Md2Pdf
     effective_input = prepare_input(tmpdir)
     source_content = File.read(effective_input, encoding: "utf-8")
     fm_options, unknown_keys = RenderHelpers.frontmatter_options(source_content)
-    unknown_keys.each { |k| warn "warning: unrecognized frontmatter key: #{k}" }
+    unknown_keys.each { |k| warn "warning: unrecognized frontmatter key: #{k}" if warn_unknown_frontmatter_key?(k) }
     warn_unmapped_frontmatter_options(fm_options)
 
     resolved_font = @font_family || fm_options[:font] || DEFAULTS[:font_family]
@@ -908,6 +910,13 @@ class Md2Pdf
       warn "warning: mode #{@mode} does not support arbitrary system font selection"
     end
     warn "warning: mode #{@mode} does not support auto-generated TOC" if @toc.nil? && options.key?(:toc) && !supports.include?(:toc)
+  end
+
+  def warn_unknown_frontmatter_key?(key)
+    return false unless @warn_unknown_frontmatter
+    return false if @obsidian && OBSIDIAN_FRONTMATTER_KEYS.include?(key)
+
+    true
   end
 
   def flush_warnings

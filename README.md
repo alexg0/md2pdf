@@ -103,6 +103,9 @@ Common options:
                       Do not number section headings
   --mermaid           Pre-render fenced ```mermaid blocks via mmdc (default)
   --no-mermaid        Skip mermaid preprocessing
+  --no-warn-unknown-frontmatter
+                      Suppress warnings for unrecognized YAML frontmatter keys
+  --obsidian          Suppress warnings for common Obsidian frontmatter keys
   --reference-doc PATH
                       DOCX template for pandoc-docx mode (controls fonts,
                       margins, styles via Word's reference-doc mechanism)
@@ -151,7 +154,7 @@ md2pdf --mode go-md2pdf --check-deps
 
 When multiple input files are passed, they are concatenated (separated by a
 blank line) and rendered as a single PDF. Title auto-detection runs on the
-first input only. YAML frontmatter from the first input is preserved;
+first input only. Recognized YAML frontmatter from the first input is applied;
 frontmatter blocks in subsequent inputs are stripped silently. For pandoc
 modes, the resource path includes every input file's directory, so embedded
 images resolve relative to whichever input referenced them.
@@ -184,12 +187,17 @@ numbersections: # bool
 * `number_sections`, `number_section` -> `numbersections`
 
 Consumed keys (`title`, `author`, `date`, `margin`, `fontsize`, `font`,
-`page_numbers`) are stripped from the frontmatter before pandoc reads it, to
-avoid double-emission in the title block. `toc` and `numbersections` are
-preserved so pandoc reads them directly.
+`page_numbers`, `prevent_widows`) are stripped from the frontmatter before
+pandoc reads it, to avoid double-emission in the title block. `toc` and
+`numbersections` are preserved so pandoc reads them directly.
 
 Unrecognized frontmatter keys emit a warning to stderr but do not abort
-rendering.
+rendering. They are not passed through to pandoc.
+
+Use `--no-warn-unknown-frontmatter` to suppress all unrecognized-frontmatter
+warnings. Use `--obsidian` for Obsidian notes; it suppresses warnings for common
+Obsidian metadata keys (`tags`, `aliases`, `cssclasses`, `cssclass`, `publish`,
+`permalink`) while still warning about other unknown keys.
 
 ### Author resolution
 
@@ -288,7 +296,7 @@ Unit tests run without any rendering engine installed. Integration tests automat
 ## Releasing
 
 ```bash
-make release VERSION=0.2.0
+make release VERSION=0.2.1
 ```
 
 `release` runs `release-tag` (writes the new version to `VERSION` and to the
@@ -299,8 +307,8 @@ branch (including a Conductor workspace branch) as long as it's at the tip of
 master. To do those steps separately:
 
 ```bash
-make release-tag VERSION=0.2.0
-git push origin master && git push origin v0.2.0
+make release-tag VERSION=0.2.1
+git push origin master && git push origin v0.2.1
 ```
 
 Pushing the tag triggers `.github/workflows/release.yml`, which computes the

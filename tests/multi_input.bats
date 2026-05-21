@@ -84,7 +84,7 @@ MD
   [ -s "$out" ]
 }
 
-@test "frontmatter from first input is preserved, subsequent stripped" {
+@test "recognized frontmatter from first input is applied, subsequent stripped" {
   has_pandoc_xelatex || skip "pandoc and xelatex not available"
 
   local a="$TEST_TEMP_DIR/a.md"
