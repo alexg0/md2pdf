@@ -89,8 +89,8 @@ Common options:
   -t TITLE            PDF title (default: first # H1 from file, or filename)
   -a, --author AUTHOR Author line (default: frontmatter `author:`, then `git config user.name`, then env vars)
   --no-author         Suppress author line entirely
-  -o, --output PATH   Output PDF path (required when passing multiple inputs
-                      unless the last positional ends in .pdf)
+  -o, --output PATH   Output path or directory (required when passing multiple inputs
+                      unless the last positional ends in .pdf or .docx)
   --font FONT         Preferred body font where supported (default: Noto Serif)
   -m MARGIN           Page margin (default: 1in)
   -s SIZE             Font size (default: 11pt)
@@ -127,6 +127,9 @@ md2pdf README.md
 
 # Specify output file
 md2pdf README.md output.pdf
+
+# Specify output directory (keeps input filename, changes extension for mode)
+md2pdf -o build/ README.md
 
 # Concatenate multiple inputs into a single PDF (last positional .pdf is output)
 md2pdf intro.md chapter1.md chapter2.md book.pdf
