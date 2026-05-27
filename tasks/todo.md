@@ -297,3 +297,30 @@
 - One-time prerequisite: create `alexg0/homebrew-tap` repo, drop `packaging/homebrew/md2pdf.rb` in as `Formula/md2pdf.rb` with the real sha256 from the first tarball, and add `HOMEBREW_TAP_TOKEN` PAT secret to this repo. (Done during this branch: tap repo created, formula seeded with placeholder sha256 that the release workflow will overwrite, secret set using the gh CLI token.)
 - Tarball URL pattern: `https://github.com/alexg0/md2pdf/archive/refs/tags/vX.Y.Z.tar.gz`.
 - Future releases: `make release-tag VERSION=X.Y.Z && git push origin master vX.Y.Z`.
+
+## Output Directory Target for -o
+
+- [x] Restate goal + acceptance criteria
+  - Goal: Let `-o/--output` accept a directory and write the converted file there using the input basename and mode-specific output extension.
+  - Acceptance: existing directory paths and trailing-slash directory paths work; explicit file output remains unchanged; parent directories are still auto-created.
+- [x] Locate existing implementation / patterns
+  - Output path handling is centralized in `Md2Pdf#resolve_output`.
+- [x] Design: minimal approach + key decisions
+  - Treat `-o` as a directory only when the path already exists as a directory or clearly ends with a directory separator.
+  - Preserve traditional explicit-file semantics for non-existing paths like `build/report.pdf`.
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Results
+
+- `-o DIR input.md` now resolves to `DIR/input.pdf` for PDF modes.
+- `--mode pandoc-docx -o DIR input.md` now resolves to `DIR/input.docx`.
+- `-o DIR/ input.md` creates `DIR/` and writes the mode-specific output filename there.
+- README usage now documents output directories.
+- Verification:
+  - `bats tests/output_resolution.bats` passed: 13 tests.
+  - `make test` passed: 172 tests.
+- Lessons: none; no correction or postmortem occurred.

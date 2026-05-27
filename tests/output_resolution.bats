@@ -2,6 +2,31 @@
 
 load test_helper
 
+setup_fake_pandoc() {
+  mkdir -p "$TEST_TEMP_DIR/fake-bin"
+
+  cat > "$TEST_TEMP_DIR/fake-bin/xelatex" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+
+  cat > "$TEST_TEMP_DIR/fake-bin/pandoc" <<'SH'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    touch "$1"
+    exit 0
+  fi
+  shift
+done
+exit 0
+SH
+
+  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex"
+  export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
+}
+
 @test "resolve_output_file defaults to .pdf extension" {
   has_pandoc_xelatex || skip "pandoc and xelatex not available"
   cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/sample.md"
@@ -36,6 +61,29 @@ load test_helper
   [ -f "$nested/x.pdf" ]
 }
 
+@test "-o existing directory keeps input filename with PDF extension" {
+  setup_fake_pandoc
+  cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/source.md"
+  local outdir="$TEST_TEMP_DIR/output"
+  mkdir -p "$outdir"
+
+  run "$MD2PDF" -o "$outdir" "$TEST_TEMP_DIR/source.md"
+
+  [ "$status" -eq 0 ]
+  [ -f "$outdir/source.pdf" ]
+}
+
+@test "-o trailing directory path creates directory and keeps input filename" {
+  setup_fake_pandoc
+  cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/source.md"
+  local outdir="$TEST_TEMP_DIR/new-output/"
+
+  run "$MD2PDF" -o "$outdir" "$TEST_TEMP_DIR/source.md"
+
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_TEMP_DIR/new-output/source.pdf" ]
+}
+
 @test "pandoc-docx defaults output extension to .docx" {
   command -v pandoc >/dev/null 2>&1 || skip "pandoc not available"
   cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/sample.md"
@@ -57,6 +105,19 @@ load test_helper
   run "$MD2PDF" --mode pandoc-docx "$FIXTURES_DIR/sample.md" "$FIXTURES_DIR/no-heading.md" "$TEST_TEMP_DIR/concat.docx"
   [ "$status" -eq 0 ]
   [ -f "$TEST_TEMP_DIR/concat.docx" ]
+}
+
+@test "pandoc-docx -o directory keeps input filename with DOCX extension" {
+  setup_fake_pandoc
+  cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/source.md"
+  local outdir="$TEST_TEMP_DIR/docx-output"
+  mkdir -p "$outdir"
+
+  run "$MD2PDF" --mode pandoc-docx -o "$outdir" "$TEST_TEMP_DIR/source.md"
+
+  [ "$status" -eq 0 ]
+  [ -f "$outdir/source.docx" ]
+  [ ! -f "$outdir/source.pdf" ]
 }
 
 @test "missing --reference-doc file aborts" {

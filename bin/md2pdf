@@ -646,7 +646,7 @@ class Md2Pdf
       opts.on("-t TITLE", "PDF title") { |v| @title = v }
       opts.on("-a", "--author AUTHOR", "Author line (default: frontmatter author, then git config user.name)") { |v| @author = v; @author_explicit = true }
       opts.on("--no-author", "Suppress author line entirely (overrides frontmatter and git fallback)") { @no_author = true }
-      opts.on("-o PATH", "--output PATH", "Output PDF path (required when passing multiple inputs)") { |v| @output_file = v }
+      opts.on("-o PATH", "--output PATH", "Output path or directory (required when passing multiple inputs)") { |v| @output_file = v }
       opts.on("--font FONT", "Body font") { |v| @font_family = v }
       opts.on("-m MARGIN", "Page margin (default: #{DEFAULTS[:margin]})") { |v| @margin = v }
       opts.on("-s SIZE", "Font size (default: #{DEFAULTS[:fontsize]})") { |v| @fontsize = v }
@@ -977,10 +977,22 @@ class Md2Pdf
   end
 
   def resolve_output
-    return @output_file if @output_file
     first = @input_files.first
     ext = cfg[:output_ext] || "pdf"
-    File.join(File.dirname(first), "#{File.basename(first, ".md")}.#{ext}")
+    default_name = "#{File.basename(first, ".md")}.#{ext}"
+
+    return File.join(@output_file, default_name) if output_directory_target?(@output_file)
+    return @output_file if @output_file
+
+    File.join(File.dirname(first), default_name)
+  end
+
+  def output_directory_target?(path)
+    return false unless path
+    return true if File.directory?(path)
+
+    separators = [File::SEPARATOR, File::ALT_SEPARATOR].compact
+    separators.any? { |separator| path.end_with?(separator) }
   end
 
   def latex_date
