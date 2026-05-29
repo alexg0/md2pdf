@@ -53,6 +53,7 @@ DEFAULTS = {
 
 MERMAID_NPM_PACKAGE = "@mermaid-js/mermaid-cli"
 MERMAID_BIN = "mmdc"
+PANDOC_TEX_PACKAGES = %w[soul].freeze
 
 MODE_ALIASES = {
   "latex" => "pandoc-xelatex",
@@ -168,7 +169,14 @@ module MermaidPreprocessor
   end
 end
 
-LATEX_UNICODE = { "✅" => "[OK]", "⚠️" => "[!]", "✓" => "[x]", "≥" => ">=", "→" => "->" }.freeze
+LATEX_UNICODE = {
+  "✅" => "[OK]",
+  "⚠️" => "[!]",
+  "✓" => "[x]",
+  "≤" => "$\\leq$",
+  "≥" => "$\\geq$",
+  "→" => "->",
+}.freeze
 PDFLATEX_EXTRA = { "—" => "--", "–" => "-", "'" => "'", "\u201c" => '"', "\u201d" => '"' }.freeze
 
 # --- Shared render helpers (used inside lambdas via ctx) ---
@@ -492,7 +500,7 @@ MODES = {
     engine: "xelatex", font_check: true,
     supports: %i[title author margin fontsize font toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc xelatex] },
-    install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif] },
+    install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif], tlmgr: PANDOC_TEX_PACKAGES },
     binary: { system: "pandoc" },
     render: PANDOC_RENDER,
   },
@@ -502,7 +510,7 @@ MODES = {
     engine: "lualatex", font_check: true,
     supports: %i[title author margin fontsize font toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc lualatex] },
-    install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif] },
+    install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif], tlmgr: PANDOC_TEX_PACKAGES },
     binary: { system: "pandoc" },
     render: PANDOC_RENDER,
   },
@@ -512,7 +520,7 @@ MODES = {
     engine: "pdflatex",
     supports: %i[title author margin fontsize toc page_numbers prevent_widows mermaid],
     deps: { cmds: %w[pandoc pdflatex] },
-    install: { brew: %w[pandoc], brew_cask: %w[basictex] },
+    install: { brew: %w[pandoc], brew_cask: %w[basictex], tlmgr: PANDOC_TEX_PACKAGES },
     binary: { system: "pandoc" },
     render: PANDOC_RENDER,
   },
@@ -868,14 +876,9 @@ class Md2Pdf
   def install_mode_deps(name)
     recipe = MODES.fetch(name)[:install]
     recipe[:require]&.each { |cmd, hint| require_cmd(cmd, hint) }
-    if recipe[:brew]
-      brew = brew_cmd!
-      recipe[:brew].each { |pkg| run_cmd(brew, "install", pkg) }
-    end
-    if recipe[:brew_cask]
-      brew = brew_cmd!
-      recipe[:brew_cask].each { |cask| run_cmd(brew, "install", "--cask", cask) }
-    end
+    install_brew_packages(recipe[:brew]) if recipe[:brew]
+    install_brew_packages(recipe[:brew_cask], cask: true) if recipe[:brew_cask]
+    ensure_tlmgr_packages(recipe[:tlmgr]) if recipe[:tlmgr]
     ensure_npm_package(recipe[:npm]) if recipe[:npm]
     if recipe[:go]
       require_cmd("go", "brew install go")
@@ -1018,6 +1021,85 @@ class Md2Pdf
     brew_cmd || abort("brew is required. Install Homebrew first.")
   end
 
+  def install_brew_packages(packages, cask: false)
+    brew = brew_cmd!
+    packages.each do |package|
+      next if brew_package_installed?(brew, package, cask: cask)
+
+      args = ["install"]
+      args << "--cask" if cask
+      run_cmd(brew, *args, package)
+    end
+  end
+
+  def brew_package_installed?(brew, package, cask:)
+    type_arg = cask ? "--cask" : "--formula"
+    system(brew, "list", type_arg, package, out: File::NULL, err: File::NULL)
+  end
+
+  def tlmgr_cmd
+    return `which tlmgr`.strip if have_cmd("tlmgr")
+    ["/Library/TeX/texbin/tlmgr"].find { |p| File.executable?(p) }
+  end
+
+  def ensure_tlmgr_packages(packages)
+    tlmgr = tlmgr_cmd || abort("tlmgr is required. Install BasicTeX or MacTeX first.")
+    if tlmgr_system_writable?(tlmgr)
+      missing = packages.reject { |package| tlmgr_package_installed?(tlmgr, package, usermode: false) }
+      run_cmd(tlmgr, "install", *missing) unless missing.empty?
+    else
+      init_tlmgr_user_tree(tlmgr)
+      missing = packages.reject { |package| tlmgr_package_installed?(tlmgr, package, usermode: true) }
+      run_cmd(tlmgr, "--usermode", "install", *missing) unless missing.empty?
+    end
+  end
+
+  def tlmgr_package_installed?(tlmgr, package, usermode:)
+    args = []
+    args << "--usermode" if usermode
+    args += %w[info --only-installed]
+    output = IO.popen([tlmgr, *args, package], err: File::NULL, &:read)
+    return false unless $?.success?
+
+    output.lines.any? { |line| line.match?(/\Ainstalled:\s+Yes\b/) }
+  rescue StandardError
+    false
+  end
+
+  def tlmgr_system_writable?(tlmgr)
+    root = tlmgr_installation_root(tlmgr)
+    return true unless root
+
+    File.writable?(File.join(root, "tlpkg"))
+  end
+
+  def tlmgr_installation_root(tlmgr)
+    output = IO.popen([tlmgr, "--version"], err: File::NULL, &:read)
+    return nil unless $?.success?
+
+    line = output.lines.find { |l| l.include?("tlmgr using installation:") }
+    line&.sub(/.*tlmgr using installation:\s*/, "")&.strip
+  rescue StandardError
+    nil
+  end
+
+  def init_tlmgr_user_tree(tlmgr)
+    return if File.file?(File.join(texmf_home, "tlpkg", "texlive.tlpdb"))
+
+    run_cmd(tlmgr, "init-usertree")
+  end
+
+  def texmf_home
+    if have_cmd("kpsewhich")
+      value = IO.popen(["kpsewhich", "-var-value=TEXMFHOME"], err: File::NULL, &:read).strip
+      return File.expand_path(value) unless value.empty?
+    end
+
+    File.join(Dir.home, "Library", "texmf")
+  rescue StandardError
+    File.join(Dir.home, "Library", "texmf")
+  end
+
   def npm_mode_bin(pkg, bin) = File.join(@tool_home, "npm", pkg, "node_modules", ".bin", bin)
 
   def new_temp_dir
@@ -1058,6 +1140,8 @@ class Md2Pdf
     require_cmd("npm", "brew install node")
     dir = File.join(@tool_home, "npm", package)
     FileUtils.mkdir_p(dir)
+    return if File.directory?(File.join(dir, "node_modules", package))
+
     pkg_json = File.join(dir, "package.json")
     unless File.exist?(pkg_json)
       sanitized = "md2pdf-rb-#{package.gsub(/[^a-z0-9-]/i, "-").downcase}".gsub(/-+/, "-")

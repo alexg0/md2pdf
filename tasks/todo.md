@@ -324,3 +324,68 @@
   - `bats tests/output_resolution.bats` passed: 13 tests.
   - `make test` passed: 172 tests.
 - Lessons: none; no correction or postmortem occurred.
+
+## Pandoc LaTeX --install-deps TeX Packages
+
+- [x] Restate goal + acceptance criteria
+  - Goal: `md2pdf --install-deps` for Pandoc LaTeX modes installs the TeX Live packages needed by Pandoc's generated LaTeX.
+  - Acceptance: Markdown strikethrough no longer fails after running install deps on BasicTeX because `soul.sty` is installed.
+  - Acceptance: Already-installed Homebrew formulae/casks, TeX packages, and local npm packages are skipped so `--install-deps` avoids noisy up-to-date warnings.
+- [x] Locate existing implementation / patterns
+  - Mode dependency recipes live in `MODES[*][:install]`.
+  - `install_mode_deps` already handles recipe keys for brew, casks, npm, go, and weasy.
+- [x] Design: minimal approach + key decisions
+  - Add a `tlmgr:` recipe key for Pandoc LaTeX modes.
+  - Keep package names in a shared constant so xelatex/lualatex/pdflatex stay aligned.
+  - Use `tlmgr` user mode when the system TeX tree is not writable, avoiding sudo prompts for normal macOS BasicTeX installs.
+  - Check Homebrew install status before calling `brew install`.
+  - Check TeX and local npm package status before rerunning their installers.
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Results
+
+- Pandoc LaTeX install recipes now install `soul` through `tlmgr`, covering Pandoc strikethrough output (`soul.sty`).
+- `--install-deps` uses TeX Live user mode when the system TeX tree is not writable, avoiding sudo for normal BasicTeX installs.
+- Already-installed Homebrew formulae/casks are skipped with `brew list` checks, so Homebrew no longer emits up-to-date warnings during `--install-deps`.
+- Already-installed TeX and npm packages are skipped too, so repeat `--install-deps` runs are quiet.
+- Verification:
+  - `ruby -c bin/md2pdf` passed.
+  - `bats tests/dependency_checking.bats` passed: 8 tests.
+  - `./bin/md2pdf --install-deps` installed `soul` into the user TeX tree.
+  - A repeat `./bin/md2pdf --install-deps` emitted only `pandoc-xelatex dependencies installed`.
+  - `kpsewhich soul.sty` resolves to `~/Library/texmf/tex/generic/soul/soul.sty`.
+  - `make test` passed: 174 tests.
+  - `git diff --check` passed.
+  - Original failing health target `rake 'pdf:build[retatrutide-monitoring]'` passed after `soul` was installed.
+- Lessons: none; no correction or postmortem occurred.
+
+## LaTeX Comparison Symbol Normalization
+
+- [x] Restate goal + acceptance criteria
+  - Goal: Unicode comparison symbols should typeset as LaTeX math in Pandoc LaTeX output instead of depending on the body font.
+  - Acceptance: `≤` becomes `$\leq$` and `≥` becomes `$\geq$` in the markdown handed to Pandoc.
+- [x] Locate existing implementation / patterns
+  - LaTeX Unicode normalization happens in `LATEX_UNICODE` before `PANDOC_RENDER` writes `combined.md`.
+- [x] Design: minimal approach + key decisions
+  - Keep the existing normalization table and update only the comparison symbol mappings.
+  - Cover the real md2pdf-to-Pandoc input path with a fake Pandoc test.
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Results
+
+- `LATEX_UNICODE` now maps `≤` to `$\leq$` and `≥` to `$\geq$` before Pandoc writes LaTeX-backed PDFs.
+- Added a fake-Pandoc regression test that verifies the actual markdown handed to Pandoc contains math commands instead of raw Unicode comparison glyphs.
+- Verification:
+  - `ruby -c bin/md2pdf` passed.
+  - `bats tests/unicode_normalization.bats` passed: 7 tests.
+  - Real render of `Limit ≤ 10 and floor ≥ 5` produced a PDF without missing-character warnings.
+  - `make test` passed: 175 tests.
+- Lessons: none; no correction or postmortem occurred.
