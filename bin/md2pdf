@@ -169,13 +169,42 @@ module MermaidPreprocessor
   end
 end
 
+# Emoji with no glyph in typical body fonts, rewritten to ASCII labels. Safe in any
+# engine (LaTeX and HTML alike), so applied unconditionally.
 LATEX_UNICODE = {
   "✅" => "[OK]",
   "⚠️" => "[!]",
   "✓" => "[x]",
-  "≤" => "$\\leq$",
-  "≥" => "$\\geq$",
-  "→" => "->",
+}.freeze
+
+# Symbols absent from common LaTeX body fonts (e.g. Noto Serif). XeLaTeX/LuaLaTeX would
+# otherwise drop these with a "Missing character" warning, so we rewrite them to LaTeX
+# commands. Applied only for LaTeX engines; HTML-based engines render the native Unicode
+# from their own font stack (this also stops e.g. "≤" leaking as a literal "$\leq$" into
+# HTML output). Math symbols use \ensuremath{...} rather than a bare $...$ span: pandoc
+# does not treat a closing "$" followed by a digit as math, so "≤3" would leak a literal
+# "$\leq$3" — \ensuremath stays valid in that position. \textcolor relies on xcolor,
+# which pandoc's default LaTeX template already loads.
+LATEX_SYMBOLS = {
+  "≤" => "\\ensuremath{\\leq}",
+  "≥" => "\\ensuremath{\\geq}",
+  "≈" => "\\ensuremath{\\approx}",
+  "≠" => "\\ensuremath{\\neq}",
+  "→" => "\\ensuremath{\\rightarrow}",
+  "←" => "\\ensuremath{\\leftarrow}",
+  "↑" => "\\ensuremath{\\uparrow}",
+  "↓" => "\\ensuremath{\\downarrow}",
+  "↔" => "\\ensuremath{\\leftrightarrow}",
+  "↕" => "\\ensuremath{\\updownarrow}",
+  "🔴" => "\\textcolor{red}{\\ensuremath{\\bullet}}",
+  "🟠" => "\\textcolor{orange}{\\ensuremath{\\bullet}}",
+  "🟡" => "\\textcolor{yellow}{\\ensuremath{\\bullet}}",
+  "🟢" => "\\textcolor{green}{\\ensuremath{\\bullet}}",
+  "🔵" => "\\textcolor{blue}{\\ensuremath{\\bullet}}",
+  "🟣" => "\\textcolor{purple}{\\ensuremath{\\bullet}}",
+  "🟤" => "\\textcolor{brown}{\\ensuremath{\\bullet}}",
+  "⚫" => "\\ensuremath{\\bullet}",
+  "⚪" => "\\ensuremath{\\circ}",
 }.freeze
 PDFLATEX_EXTRA = { "—" => "--", "–" => "-", "'" => "'", "\u201c" => '"', "\u201d" => '"' }.freeze
 
@@ -351,8 +380,11 @@ PANDOC_RENDER = ->(ctx) do
   # Preprocess: title block + unicode normalization
   content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
   content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
-  LATEX_UNICODE.each { |k, v| content.gsub!(k, v) }
-  PDFLATEX_EXTRA.each { |k, v| content.gsub!(k, v) } if engine == "pdflatex"
+  LATEX_UNICODE.each { |k, v| content.gsub!(k) { v } }
+  if %w[xelatex lualatex pdflatex].include?(engine)
+    LATEX_SYMBOLS.each { |k, v| content.gsub!(k) { v } }
+  end
+  PDFLATEX_EXTRA.each { |k, v| content.gsub!(k) { v } } if engine == "pdflatex"
   tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
 
   cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]}
