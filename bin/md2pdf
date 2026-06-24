@@ -250,6 +250,28 @@ module RenderHelpers
     path
   end
 
+  def pandoc_markdown(ctx, normalize_unicode: false)
+    content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
+    content << prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
+    normalize_latex_unicode!(content, ctx[:engine]) if normalize_unicode
+    tmpfile(ctx, "combined.md", content)
+  end
+
+  def normalize_latex_unicode!(content, engine)
+    LATEX_UNICODE.each { |k, v| content.gsub!(k) { v } }
+    LATEX_SYMBOLS.each { |k, v| content.gsub!(k) { v } } if %w[xelatex lualatex pdflatex].include?(engine)
+    PDFLATEX_EXTRA.each { |k, v| content.gsub!(k) { v } } if engine == "pdflatex"
+  end
+
+  def add_pandoc_document_flags(cmd, ctx)
+    cmd << "--number-sections" if ctx[:number_sections]
+    cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
+    cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
+    cmd << "--metadata=toc:true" if ctx[:toc_override] == true
+    cmd << "--metadata=toc:false" if ctx[:toc_override] == false
+    cmd << "--toc" if ctx[:toc]
+  end
+
   def number_sections?(content)
     !frontmatter_controls_numbering?(content) && !numbered_h2?(content)
   end
@@ -375,25 +397,11 @@ end
 
 PANDOC_RENDER = ->(ctx) do
   engine = ctx[:engine]
-  tmpdir = ctx[:tmpdir]
-
-  # Preprocess: title block + unicode normalization
-  content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
-  LATEX_UNICODE.each { |k, v| content.gsub!(k) { v } }
-  if %w[xelatex lualatex pdflatex].include?(engine)
-    LATEX_SYMBOLS.each { |k, v| content.gsub!(k) { v } }
-  end
-  PDFLATEX_EXTRA.each { |k, v| content.gsub!(k) { v } } if engine == "pdflatex"
-  tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
+  tmp_md = RenderHelpers.pandoc_markdown(ctx, normalize_unicode: true)
 
   cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]}
            --pdf-engine=#{engine} -V linkcolor:blue -V urlcolor:blue -o #{ctx[:output]}]
-  cmd << "--number-sections" if ctx[:number_sections]
-  cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
-  cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
-  cmd << "--metadata=toc:true" if ctx[:toc_override] == true
-  cmd << "--metadata=toc:false" if ctx[:toc_override] == false
+  RenderHelpers.add_pandoc_document_flags(cmd, ctx)
 
   case engine
   when "xelatex", "lualatex"
@@ -410,7 +418,6 @@ PANDOC_RENDER = ->(ctx) do
     end
   end
 
-  cmd << "--toc" if ctx[:toc]
   if %w[xelatex lualatex pdflatex].include?(engine)
     cmd += ["-V", "pagestyle:#{ctx[:page_numbers] ? "plain" : "empty"}"]
     if ctx[:prevent_widows]
@@ -428,19 +435,10 @@ end
 # CSS or LaTeX flags, so margin/fontsize/font do not apply here.
 
 PANDOC_DOCX_RENDER = ->(ctx) do
-  tmpdir = ctx[:tmpdir]
-
-  content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
-  tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
+  tmp_md = RenderHelpers.pandoc_markdown(ctx)
 
   cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]} -o #{ctx[:output]}]
-  cmd << "--number-sections" if ctx[:number_sections]
-  cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
-  cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
-  cmd << "--metadata=toc:true" if ctx[:toc_override] == true
-  cmd << "--metadata=toc:false" if ctx[:toc_override] == false
-  cmd << "--toc" if ctx[:toc]
+  RenderHelpers.add_pandoc_document_flags(cmd, ctx)
   cmd += ["--reference-doc", ctx[:reference_doc]] if ctx[:reference_doc]
 
   [cmd]
