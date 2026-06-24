@@ -2,31 +2,6 @@
 
 load test_helper
 
-setup_fake_pandoc() {
-  mkdir -p "$TEST_TEMP_DIR/fake-bin"
-
-  cat > "$TEST_TEMP_DIR/fake-bin/xelatex" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-
-  cat > "$TEST_TEMP_DIR/fake-bin/pandoc" <<'SH'
-#!/usr/bin/env bash
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    touch "$1"
-    exit 0
-  fi
-  shift
-done
-exit 0
-SH
-
-  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex"
-  export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
-}
-
 @test "resolve_output_file defaults to .pdf extension" {
   has_pandoc_xelatex || skip "pandoc and xelatex not available"
   cp "$FIXTURES_DIR/sample.md" "$TEST_TEMP_DIR/sample.md"

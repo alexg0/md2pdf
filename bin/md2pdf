@@ -250,6 +250,28 @@ module RenderHelpers
     path
   end
 
+  def pandoc_markdown(ctx, normalize_unicode: false)
+    content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
+    content << prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
+    normalize_latex_unicode!(content, ctx[:engine]) if normalize_unicode
+    tmpfile(ctx, "combined.md", content)
+  end
+
+  def normalize_latex_unicode!(content, engine)
+    LATEX_UNICODE.each { |k, v| content.gsub!(k) { v } }
+    LATEX_SYMBOLS.each { |k, v| content.gsub!(k) { v } } if %w[xelatex lualatex pdflatex].include?(engine)
+    PDFLATEX_EXTRA.each { |k, v| content.gsub!(k) { v } } if engine == "pdflatex"
+  end
+
+  def add_pandoc_document_flags(cmd, ctx)
+    cmd << "--number-sections" if ctx[:number_sections]
+    cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
+    cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
+    cmd << "--metadata=toc:true" if ctx[:toc_override] == true
+    cmd << "--metadata=toc:false" if ctx[:toc_override] == false
+    cmd << "--toc" if ctx[:toc]
+  end
+
   def number_sections?(content)
     !frontmatter_controls_numbering?(content) && !numbered_h2?(content)
   end
@@ -375,25 +397,11 @@ end
 
 PANDOC_RENDER = ->(ctx) do
   engine = ctx[:engine]
-  tmpdir = ctx[:tmpdir]
-
-  # Preprocess: title block + unicode normalization
-  content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
-  LATEX_UNICODE.each { |k, v| content.gsub!(k) { v } }
-  if %w[xelatex lualatex pdflatex].include?(engine)
-    LATEX_SYMBOLS.each { |k, v| content.gsub!(k) { v } }
-  end
-  PDFLATEX_EXTRA.each { |k, v| content.gsub!(k) { v } } if engine == "pdflatex"
-  tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
+  tmp_md = RenderHelpers.pandoc_markdown(ctx, normalize_unicode: true)
 
   cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]}
            --pdf-engine=#{engine} -V linkcolor:blue -V urlcolor:blue -o #{ctx[:output]}]
-  cmd << "--number-sections" if ctx[:number_sections]
-  cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
-  cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
-  cmd << "--metadata=toc:true" if ctx[:toc_override] == true
-  cmd << "--metadata=toc:false" if ctx[:toc_override] == false
+  RenderHelpers.add_pandoc_document_flags(cmd, ctx)
 
   case engine
   when "xelatex", "lualatex"
@@ -410,7 +418,6 @@ PANDOC_RENDER = ->(ctx) do
     end
   end
 
-  cmd << "--toc" if ctx[:toc]
   if %w[xelatex lualatex pdflatex].include?(engine)
     cmd += ["-V", "pagestyle:#{ctx[:page_numbers] ? "plain" : "empty"}"]
     if ctx[:prevent_widows]
@@ -428,19 +435,10 @@ end
 # CSS or LaTeX flags, so margin/fontsize/font do not apply here.
 
 PANDOC_DOCX_RENDER = ->(ctx) do
-  tmpdir = ctx[:tmpdir]
-
-  content = "% #{ctx[:title]}\n% #{ctx[:author] || ""}\n% #{ctx[:date]}\n\n"
-  content << RenderHelpers.prune_frontmatter(File.read(ctx[:input], encoding: "utf-8"))
-  tmp_md = RenderHelpers.tmpfile(ctx, "combined.md", content)
+  tmp_md = RenderHelpers.pandoc_markdown(ctx)
 
   cmd = %W[pandoc #{tmp_md} --resource-path=#{ctx[:resource_path]} -o #{ctx[:output]}]
-  cmd << "--number-sections" if ctx[:number_sections]
-  cmd << "--metadata=numbersections:true" if ctx[:number_sections_override] == true
-  cmd << "--metadata=numbersections:false" if ctx[:number_sections_override] == false
-  cmd << "--metadata=toc:true" if ctx[:toc_override] == true
-  cmd << "--metadata=toc:false" if ctx[:toc_override] == false
-  cmd << "--toc" if ctx[:toc]
+  RenderHelpers.add_pandoc_document_flags(cmd, ctx)
   cmd += ["--reference-doc", ctx[:reference_doc]] if ctx[:reference_doc]
 
   [cmd]
@@ -676,6 +674,8 @@ class Md2Pdf
 
   def cfg = MODES.fetch(@mode)
 
+  def supports?(feature) = cfg[:supports].include?(feature)
+
   # --- Argument parsing ---
 
   def parse_args(argv)
@@ -785,16 +785,29 @@ class Md2Pdf
     effective_input = prepare_input(tmpdir)
     source_content = File.read(effective_input, encoding: "utf-8")
     fm_options, unknown_keys = RenderHelpers.frontmatter_options(source_content)
-    unknown_keys.each { |k| warn "warning: unrecognized frontmatter key: #{k}" if warn_unknown_frontmatter_key?(k) }
+    warn_unknown_frontmatter_keys(unknown_keys)
     warn_unmapped_frontmatter_options(fm_options)
 
     resolved_font = @font_family || fm_options[:font] || DEFAULTS[:font_family]
     ensure_font(cfg[:engine], resolved_font) if cfg[:font_check]
 
-    input_path = preprocess_mermaid(source_content, tmpdir) || effective_input
+    ctx = render_context(
+      binary: binary, resolved: resolved, tmpdir: tmpdir,
+      effective_input: effective_input, source_content: source_content,
+      fm_options: fm_options, resolved_font: resolved_font
+    )
+    cmds = cfg[:render].call(ctx)
+    cmds.each { |cmd| run_cmd(*cmd) }
+    patch_docx_update_fields(resolved, tmpdir) if cfg[:output_ext] == "docx"
+    puts resolved
+  end
 
-    ctx = {
-      binary: binary, input: input_path, output: resolved, tmpdir: tmpdir,
+  def render_context(binary:, resolved:, tmpdir:, effective_input:, source_content:, fm_options:, resolved_font:)
+    {
+      binary: binary,
+      input: preprocess_mermaid(source_content, tmpdir) || effective_input,
+      output: resolved,
+      tmpdir: tmpdir,
       source_dir: File.dirname(File.expand_path(@input_files.first)),
       title: @title || fm_options[:title] || detect_title_from_source,
       author: resolve_author(fm_options),
@@ -802,21 +815,16 @@ class Md2Pdf
       margin: @margin || fm_options[:margin] || DEFAULTS[:margin],
       fontsize: @fontsize || fm_options[:fontsize] || DEFAULTS[:fontsize],
       font: resolved_font,
-      toc: !@toc.nil? ? @toc : (fm_options.key?(:toc) ? fm_options[:toc] : DEFAULTS[:toc]),
+      toc: resolved_option(@toc, fm_options, :toc, DEFAULTS[:toc]),
       toc_override: @toc,
-      page_numbers: !@page_numbers.nil? ? @page_numbers : (fm_options.key?(:page_numbers) ? fm_options[:page_numbers] : DEFAULTS[:page_numbers]),
-      prevent_widows: !@prevent_widows.nil? ? @prevent_widows : (fm_options.key?(:prevent_widows) ? fm_options[:prevent_widows] : DEFAULTS[:prevent_widows]),
+      page_numbers: resolved_option(@page_numbers, fm_options, :page_numbers, DEFAULTS[:page_numbers]),
+      prevent_widows: resolved_option(@prevent_widows, fm_options, :prevent_widows, DEFAULTS[:prevent_widows]),
       engine: cfg[:engine],
       number_sections: RenderHelpers.resolve_number_sections(source_content, @number_sections),
       number_sections_override: @number_sections,
       resource_path: build_resource_path,
       reference_doc: @reference_doc,
     }
-
-    cmds = cfg[:render].call(ctx)
-    cmds.each { |cmd| run_cmd(*cmd) }
-    patch_docx_update_fields(resolved, tmpdir) if cfg[:output_ext] == "docx"
-    puts resolved
   end
 
   # Pandoc emits the docx TOC as a "dirty" Word field whose body is empty —
@@ -925,26 +933,36 @@ class Md2Pdf
   # --- Config-driven unmapped option warnings ---
 
   def warn_unmapped_options
-    supports = cfg[:supports]
-    @warnings << "mode #{@mode} ignores -t/--title" if @title && !supports.include?(:title)
-    @warnings << "mode #{@mode} ignores -a/--author" if @author_explicit && !supports.include?(:author)
-    @warnings << "mode #{@mode} ignores -m/--margin" if @margin && !supports.include?(:margin)
-    @warnings << "mode #{@mode} ignores -s/--size" if @fontsize && !supports.include?(:fontsize)
-    @warnings << "mode #{@mode} does not support arbitrary system font selection" if @font_family && !supports.include?(:font)
-    @warnings << "mode #{@mode} does not support auto-generated TOC" if !@toc.nil? && !supports.include?(:toc)
-    @warnings << "mode #{@mode} ignores --reference-doc" if @reference_doc && !supports.include?(:reference_doc)
+    warn_unmapped_option(:title, @title, "mode #{@mode} ignores -t/--title")
+    warn_unmapped_option(:author, @author_explicit, "mode #{@mode} ignores -a/--author")
+    warn_unmapped_option(:margin, @margin, "mode #{@mode} ignores -m/--margin")
+    warn_unmapped_option(:fontsize, @fontsize, "mode #{@mode} ignores -s/--size")
+    warn_unmapped_option(:font, @font_family, "mode #{@mode} does not support arbitrary system font selection")
+    warn_unmapped_option(:toc, !@toc.nil?, "mode #{@mode} does not support auto-generated TOC")
+    warn_unmapped_option(:reference_doc, @reference_doc, "mode #{@mode} ignores --reference-doc")
   end
 
   def warn_unmapped_frontmatter_options(options)
-    supports = cfg[:supports]
-    warn "warning: mode #{@mode} ignores frontmatter title" if !@title && options.key?(:title) && !supports.include?(:title)
-    warn "warning: mode #{@mode} ignores frontmatter author" if !@author && options.key?(:author) && !supports.include?(:author)
-    warn "warning: mode #{@mode} ignores frontmatter margin" if !@margin && options.key?(:margin) && !supports.include?(:margin)
-    warn "warning: mode #{@mode} ignores frontmatter fontsize" if !@fontsize && options.key?(:fontsize) && !supports.include?(:fontsize)
-    if !@font_family && options.key?(:font) && !supports.include?(:font)
-      warn "warning: mode #{@mode} does not support arbitrary system font selection"
-    end
-    warn "warning: mode #{@mode} does not support auto-generated TOC" if @toc.nil? && options.key?(:toc) && !supports.include?(:toc)
+    warn_unmapped_frontmatter_option(:title, options, overridden: @title, message: "mode #{@mode} ignores frontmatter title")
+    warn_unmapped_frontmatter_option(:author, options, overridden: @author, message: "mode #{@mode} ignores frontmatter author")
+    warn_unmapped_frontmatter_option(:margin, options, overridden: @margin, message: "mode #{@mode} ignores frontmatter margin")
+    warn_unmapped_frontmatter_option(:fontsize, options, overridden: @fontsize, message: "mode #{@mode} ignores frontmatter fontsize")
+    warn_unmapped_frontmatter_option(:font, options, overridden: @font_family,
+      message: "mode #{@mode} does not support arbitrary system font selection")
+    warn_unmapped_frontmatter_option(:toc, options, overridden: !@toc.nil?,
+      message: "mode #{@mode} does not support auto-generated TOC")
+  end
+
+  def warn_unmapped_option(feature, used, message)
+    @warnings << message if used && !supports?(feature)
+  end
+
+  def warn_unmapped_frontmatter_option(feature, options, overridden:, message:)
+    warn "warning: #{message}" if !overridden && options.key?(feature) && !supports?(feature)
+  end
+
+  def warn_unknown_frontmatter_keys(keys)
+    keys.each { |key| warn "warning: unrecognized frontmatter key: #{key}" if warn_unknown_frontmatter_key?(key) }
   end
 
   def warn_unknown_frontmatter_key?(key)
@@ -959,6 +977,13 @@ class Md2Pdf
   end
 
   # --- Helpers ---
+
+  def resolved_option(cli_value, fm_options, key, default)
+    return cli_value unless cli_value.nil?
+    return fm_options[key] if fm_options.key?(key)
+
+    default
+  end
 
   def detect_title_from_source
     first = @input_files.first
@@ -1184,7 +1209,7 @@ class Md2Pdf
 
   def preprocess_mermaid(content, tmpdir)
     return nil unless @mermaid
-    return nil unless cfg[:supports].include?(:mermaid)
+    return nil unless supports?(:mermaid)
     return nil unless MermaidPreprocessor.has_blocks?(content)
 
     mmdc = locate_mmdc

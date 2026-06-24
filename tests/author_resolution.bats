@@ -2,35 +2,6 @@
 
 load test_helper
 
-setup_fake_pandoc() {
-  mkdir -p "$TEST_TEMP_DIR/fake-bin"
-
-  cat > "$TEST_TEMP_DIR/fake-bin/xelatex" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-
-  cat > "$TEST_TEMP_DIR/fake-bin/pandoc" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$@" > "$MD2PDF_PANDOC_ARGS_LOG"
-cp "$1" "$MD2PDF_PANDOC_INPUT_LOG"
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    touch "$1"
-    exit 0
-  fi
-  shift
-done
-exit 0
-SH
-
-  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex"
-  export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
-  export MD2PDF_PANDOC_ARGS_LOG="$TEST_TEMP_DIR/pandoc-args.txt"
-  export MD2PDF_PANDOC_INPUT_LOG="$TEST_TEMP_DIR/pandoc-input.md"
-}
-
 # Install a fake `git` shim that returns a configured user.name. The shim is
 # placed in fake-bin and shadows the real git for the test process.
 install_fake_git() {
@@ -54,12 +25,6 @@ install_failing_git() {
 exit 1
 SH
   chmod +x "$TEST_TEMP_DIR/fake-bin/git"
-}
-
-write_doc() {
-  local path="$1"
-  shift
-  printf '%s\n' "$@" > "$path"
 }
 
 # Strip the env so leftover GIT_AUTHOR_NAME etc. from the surrounding shell

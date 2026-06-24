@@ -2,38 +2,6 @@
 
 load test_helper
 
-# Build a fake-bin directory containing fake pandoc + xelatex (so we don't need
-# the real renderer toolchain). The fake pandoc logs argv and the input markdown
-# it received, then writes an empty PDF to -o. The fake xelatex always succeeds.
-setup_fake_pandoc() {
-  mkdir -p "$TEST_TEMP_DIR/fake-bin"
-
-  cat > "$TEST_TEMP_DIR/fake-bin/xelatex" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-
-  cat > "$TEST_TEMP_DIR/fake-bin/pandoc" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$@" > "$MD2PDF_PANDOC_ARGS_LOG"
-cp "$1" "$MD2PDF_PANDOC_INPUT_LOG"
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    touch "$1"
-    exit 0
-  fi
-  shift
-done
-exit 0
-SH
-
-  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex"
-  export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
-  export MD2PDF_PANDOC_ARGS_LOG="$TEST_TEMP_DIR/pandoc-args.txt"
-  export MD2PDF_PANDOC_INPUT_LOG="$TEST_TEMP_DIR/pandoc-input.md"
-}
-
 # Add a fake mmdc that records each invocation and produces an empty PNG.
 setup_fake_mmdc() {
   export MD2PDF_MMDC_CALLS_LOG="$TEST_TEMP_DIR/mmdc-calls.log"
