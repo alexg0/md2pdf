@@ -12,6 +12,7 @@ Multi-engine Markdown to PDF (and DOCX) converter. Supports 11 rendering backend
 - Unicode character normalization for LaTeX engines
 - Native rendering of fenced ```` ```mermaid ```` blocks via `mmdc` (cached)
 - Per-mode warnings when options are unsupported
+- Bundled `pdf-generation` agent skill for reliable Markdown-to-PDF workflows
 
 ## Supported Modes
 
@@ -78,6 +79,56 @@ md2pdf --mode md-to-pdf --install-deps
 # Install all mode dependencies
 md2pdf --install-deps-all
 ```
+
+## PDF generation agent skill
+
+The repository includes [`skills/pdf-generation/SKILL.md`](skills/pdf-generation/SKILL.md),
+an agent workflow dedicated to generating and visually verifying PDFs through
+the `md2pdf` CLI. It teaches agents to:
+
+- Select and check an installed PDF renderer through `md2pdf`.
+- Use Markdown frontmatter and CLI precedence correctly.
+- Preserve multi-input resource paths and render Mermaid diagrams.
+- Request approval before installing renderer dependencies.
+- Render every final page with Poppler and inspect it before delivery.
+
+The skill deliberately does not edit existing PDFs, fill forms, generate DOCX,
+or maintain Rake build pipelines. Those concerns belong to other workflows.
+
+### Install for Claude Code and Codex
+
+Install from a stable clone, not a temporary worktree. From the repository root:
+
+```bash
+mkdir -p "$HOME/.claude/skills" "$HOME/.codex/skills"
+
+install_pdf_skill() {
+  target="$1/pdf-generation"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    echo "Refusing to replace existing path: $target" >&2
+    return 1
+  fi
+  ln -s "$PWD/skills/pdf-generation" "$target"
+}
+
+install_pdf_skill "$HOME/.claude/skills"
+install_pdf_skill "$HOME/.codex/skills"
+```
+
+Each install refuses to replace an existing destination, including a broken
+symlink. Inspect and remove or relocate an old installation before retrying; do
+not overwrite an unknown skill path.
+
+Agents can then invoke `$pdf-generation` explicitly or trigger it with requests
+such as:
+
+- “Generate a polished PDF from `report.md`.”
+- “Combine these Markdown chapters into one PDF with md2pdf.”
+- “Fix the Mermaid rendering in this generated PDF.”
+- “Build this Obsidian note as a PDF and verify every page.”
+
+Humans can continue using the CLI directly; the skill adds agent procedure and
+visual quality checks without changing `md2pdf` behavior.
 
 ## Usage
 
