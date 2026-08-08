@@ -33,6 +33,74 @@
     Poppler rendering was inspected with no visible defects.
   - `make test` passed: 179 tests.
   - `git diff --check` passed.
+## Implementation Simplification Pass 2
+
+- [x] Restate goal + acceptance criteria
+  - Goal: refactor and simplify implementation while confirming no degradation of user-visible behavior.
+  - Acceptance: implementation complexity is reduced with no CLI/output behavior changes; existing tests continue to pass; any changed behavior surface is covered by focused tests.
+- [x] Locate existing implementation / patterns
+- [x] Design: minimal approach + key decisions
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification (lint/tests/build/manual repro)
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Working Notes
+
+- Start from committed branch `alexg0/simplify-code-tests`; keep this as a follow-up commit-sized slice.
+- Prefer extracting repeated option-resolution and warning patterns over changing renderer behavior.
+- Extract small helpers only: avoid table-driven metaprogramming so the warning messages and precedence remain obvious.
+
+### Results
+
+- Added `supports?` to centralize mode feature checks.
+- Added `resolved_option` for CLI > frontmatter > default precedence on boolean render options.
+- Added small warning helpers for unsupported CLI/frontmatter options while preserving exact warning messages.
+- Extracted `render_context` so `render` focuses on orchestration and command execution instead of constructing every renderer option inline.
+- Extracted `warn_unknown_frontmatter_keys` and reused `supports?` for mermaid preprocessing checks.
+- No new tests were needed; this pass is covered by existing warning, frontmatter, section-numbering, and full behavior tests.
+- Verification:
+  - `ruby -c bin/md2pdf` — Syntax OK.
+  - `bats tests/warning_system.bats tests/frontmatter_options.bats tests/section_numbering.bats` — 62 tests passed.
+  - `bats tests/frontmatter_options.bats tests/mermaid_preprocessing.bats tests/output_resolution.bats tests/warning_system.bats tests/section_numbering.bats` — 82 tests passed.
+  - `make test` — 179 tests passed.
+  - `git diff --check` — passed.
+- Lessons: none; no correction or postmortem was needed.
+
+## Simplification Pass
+
+- [x] Restate goal + acceptance criteria
+  - Goal: simplify the implementation and consolidate/combine tests where appropriate without changing user-visible behavior.
+  - Acceptance: duplicated pandoc rendering/test setup is reduced; existing CLI/render behavior remains covered; syntax and tests pass.
+- [x] Locate existing implementation / patterns
+- [x] Design: minimal approach + key decisions
+- [x] Implement smallest safe slice
+- [x] Add/adjust tests
+- [x] Run verification (lint/tests/build/manual repro)
+- [x] Summarize changes + verification story
+- [x] Record lessons (if any)
+
+### Working Notes
+
+- `bin/md2pdf` is still a single-file Ruby CLI; keep changes local and avoid introducing new dependencies.
+- `PANDOC_RENDER` and `PANDOC_DOCX_RENDER` duplicate title-block input construction and metadata override flags.
+- Multiple Bats files duplicate fake-pandoc setup helpers.
+
+### Results
+
+- Extracted shared pandoc markdown generation into `RenderHelpers.pandoc_markdown`.
+- Extracted shared pandoc CLI metadata/TOC flags into `RenderHelpers.add_pandoc_document_flags`.
+- Kept Unicode normalization explicit for PDF pandoc renderers so DOCX behavior stays unchanged.
+- Moved fake pandoc/TeX setup, markdown fixture writing, and argument assertions into `tests/test_helper.bash`.
+- Removed duplicated fake-pandoc setup from frontmatter, section-numbering, author, unicode, mermaid, and output-resolution tests.
+- Verification:
+  - `ruby -c bin/md2pdf` — Syntax OK.
+  - `bats tests/frontmatter_options.bats tests/section_numbering.bats tests/author_resolution.bats tests/unicode_normalization.bats` — 77 tests passed.
+  - `bats tests/frontmatter_options.bats tests/section_numbering.bats tests/author_resolution.bats tests/unicode_normalization.bats tests/mermaid_preprocessing.bats tests/output_resolution.bats` — 97 tests passed.
+  - `make test` — 179 tests passed.
+  - `git diff --check` — passed.
+- Lessons: none; no correction or postmortem was needed.
 
 ## Unknown Frontmatter PDF Error
 

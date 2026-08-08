@@ -2,56 +2,6 @@
 
 load test_helper
 
-setup_fake_pandoc() {
-  mkdir -p "$TEST_TEMP_DIR/fake-bin"
-
-  cat > "$TEST_TEMP_DIR/fake-bin/xelatex" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-
-  cat > "$TEST_TEMP_DIR/fake-bin/pdflatex" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-
-  cat > "$TEST_TEMP_DIR/fake-bin/pandoc" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$@" > "$MD2PDF_PANDOC_ARGS_LOG"
-cp "$1" "$MD2PDF_PANDOC_INPUT_LOG"
-saved_args=("$@")
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--css" ]; then
-    shift
-    [ -n "$MD2PDF_PANDOC_CSS_LOG" ] && [ -f "$1" ] && cp "$1" "$MD2PDF_PANDOC_CSS_LOG"
-  fi
-  shift
-done
-set -- "${saved_args[@]}"
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    touch "$1"
-    exit 0
-  fi
-  shift
-done
-exit 0
-SH
-
-  chmod +x "$TEST_TEMP_DIR/fake-bin/pandoc" "$TEST_TEMP_DIR/fake-bin/xelatex" "$TEST_TEMP_DIR/fake-bin/pdflatex"
-  export PATH="$TEST_TEMP_DIR/fake-bin:$PATH"
-  export MD2PDF_PANDOC_ARGS_LOG="$TEST_TEMP_DIR/pandoc-args.txt"
-  export MD2PDF_PANDOC_INPUT_LOG="$TEST_TEMP_DIR/pandoc-input.md"
-  export MD2PDF_PANDOC_CSS_LOG="$TEST_TEMP_DIR/pandoc-css.txt"
-}
-
-write_doc() {
-  local path="$1"
-  shift
-  printf '%s\n' "$@" > "$path"
-}
-
 @test "frontmatter title is used as title block" {
   setup_fake_pandoc
   local input="$TEST_TEMP_DIR/fm-title.md"
