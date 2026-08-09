@@ -1,3 +1,38 @@
+## Bundled PDF generation skill
+
+- [x] Restate goal and acceptance criteria
+  - Goal: Ship an agent skill owned by md2pdf that generates PDFs only through
+    the `md2pdf` CLI and documents its use for humans and agents.
+  - Acceptance: canonical skill source lives under `skills/pdf-generation`;
+    generation never invokes a renderer directly; no Rakefile is bundled;
+    README documents scope, installation, triggers, and verification.
+- [x] Inspect current CLI behavior and repository conventions.
+- [x] Implement the smallest client-neutral skill.
+- [x] Add agent-facing metadata and human installation documentation.
+- [x] Validate skill metadata, documented commands, and repository checks.
+
+### Working notes
+
+- The general upstream PDF skill remains responsible for reading, editing, and
+  filling existing PDFs. This skill is deliberately limited to md2pdf generation.
+- Install global links only from a stable clone, never this disposable worktree.
+
+### Results
+
+- Added `skills/pdf-generation/SKILL.md` as the canonical md2pdf-owned agent
+  workflow, limited to PDF generation through the `md2pdf` CLI.
+- Added generated `agents/openai.yaml` metadata for discovery and explicit
+  `$pdf-generation` invocation.
+- Documented human scope, safe stable-clone installation, agent triggers, and
+  workflow boundaries in `README.md`.
+- Verification:
+  - Skill validator passed.
+  - `ruby -c bin/md2pdf` passed.
+  - Version, mode listing, and `pandoc-xelatex --check-deps` passed.
+  - A real `tests/fixtures/sample.md` build produced a valid one-page PDF; its
+    Poppler rendering was inspected with no visible defects.
+  - `make test` passed: 179 tests.
+  - `git diff --check` passed.
 ## Implementation Simplification Pass 2
 
 - [x] Restate goal + acceptance criteria

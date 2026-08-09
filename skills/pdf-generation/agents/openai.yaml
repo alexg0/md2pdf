@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF Generation"
+  short_description: "Generate polished PDFs from Markdown with md2pdf"
+  default_prompt: "Use $pdf-generation to generate and visually verify a polished PDF from these Markdown files."
