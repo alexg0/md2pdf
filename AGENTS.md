@@ -2,7 +2,13 @@
 
 ## Architecture in one paragraph
 
-`bin/md2pdf` is a single self-contained Ruby script. For pandoc modes, `PANDOC_RENDER` (`bin/md2pdf:318`) builds a `combined.md` by prepending a pandoc title block (`% title / % author / % date`) to the source after passing it through `RenderHelpers.prune_frontmatter` (`bin/md2pdf:243`). Pandoc then reads `combined.md`. The render context is assembled in `Md2Pdf#render` (`bin/md2pdf:665`).
+`bin/md2pdf` is a single self-contained Ruby script. For pandoc modes,
+`PANDOC_RENDER` (`bin/md2pdf:398`) calls `RenderHelpers.pandoc_markdown`
+(`bin/md2pdf:253`), which builds a `combined.md` by prepending a pandoc title
+block (`% title / % author / % date`) to the source after passing it through
+`RenderHelpers.prune_frontmatter` (`bin/md2pdf:321`). Pandoc then reads
+`combined.md`. The render context is assembled in `Md2Pdf#render_context`
+(`bin/md2pdf:805`), called by `Md2Pdf#render` (`bin/md2pdf:772`).
 
 ## Gotcha: empty pruned frontmatter is a YAML trap
 
@@ -25,9 +31,12 @@ did not find expected alphabetic or numeric character
 
 ## Testing pattern
 
-- `setup_fake_pandoc` in `tests/frontmatter_options.bats` installs a stub `pandoc` that captures the input file at `$MD2PDF_PANDOC_INPUT_LOG` and CLI args at `$MD2PDF_PANDOC_ARGS_LOG`. Use it to assert the exact bytes md2pdf hands to pandoc — fast, no LaTeX required.
+- `setup_fake_pandoc` in `tests/test_helper.bash:13` installs a stub `pandoc`
+  that captures the input file at `$MD2PDF_PANDOC_INPUT_LOG` and CLI args at
+  `$MD2PDF_PANDOC_ARGS_LOG`. Use it to assert the exact bytes md2pdf hands to
+  pandoc — fast, no LaTeX required.
 - For end-to-end checks against real pandoc+xelatex, gate with `has_pandoc_xelatex || skip` (`tests/test_helper.bash:9`).
-- Run `make test` (or `bats tests/`). Full suite is ~150 tests.
+- Run `make test` (or `bats tests/`). The full suite is 179 tests.
 
 ## Local dev install
 

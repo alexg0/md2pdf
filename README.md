@@ -350,7 +350,7 @@ Unit tests run without any rendering engine installed. Integration tests automat
 ## Releasing
 
 ```bash
-make release VERSION=0.2.1
+make release VERSION=0.2.3
 ```
 
 `release` runs `release-tag` (writes the new version to `VERSION` and to the
@@ -361,8 +361,8 @@ branch (including a Conductor workspace branch) as long as it's at the tip of
 master. To do those steps separately:
 
 ```bash
-make release-tag VERSION=0.2.1
-git push origin master && git push origin v0.2.1
+make release-tag VERSION=0.2.3
+git push origin master && git push origin v0.2.3
 ```
 
 Pushing the tag triggers `.github/workflows/release.yml`, which computes the
