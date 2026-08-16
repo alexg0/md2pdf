@@ -535,3 +535,25 @@
 Coverage result: `make coverage` passed all 167 tests, covered 538 of 608
 executable lines (88.49%), and completed in 35.25 seconds. Instrumentation still
 leaves the suite 76.5% faster than the 149.87-second serial baseline.
+
+### Runtime follow-up
+
+- [x] Benchmark 16, 24, and 28 parallel jobs without changing tests.
+- [x] Keep concurrency below the measured contention point.
+- [x] Reuse Bats' native per-test temporary directory instead of nesting `mktemp` and duplicate cleanup.
+- [x] Reuse checked-in fake render executables instead of recreating them in every test.
+- [x] Verify a stable measured run at least 10 seconds faster than 35.25 seconds.
+
+Optimized `make coverage` runs completed in 16.82–18.55 seconds with all 167 tests
+passing and line coverage unchanged at 538 of 608 executable lines (88.49%). The
+16.70-second worst-case reduction exceeds the requested additional 10 seconds. All
+existing real-pandoc/XeLaTeX integration tests remain unchanged; the speedup comes
+from using 16 workers, Bats' native temporary directories, and shared fake render
+executables instead of rewriting and chmodding four copies per fake-render test.
+
+Shebang microbenchmark (2,000 no-op fake-engine launches): `/usr/bin/env bash`
+16.84 seconds, `/bin/sh` 8.26 seconds, and direct `/bin/bash` 5.66 seconds. Direct
+Bash retained the existing fake-Pandoc implementation and produced full coverage
+runs of 18.55, 17.47, and 16.82 seconds; the full-suite improvement over `env` is
+small relative to scheduling variance, but `/bin/sh` was slower and required a
+needless POSIX rewrite.

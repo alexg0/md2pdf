@@ -4,7 +4,7 @@ DEV_PREFIX ?= $(HOME)/.local
 DEV_BIN_DIR := $(DEV_PREFIX)/bin
 SRC_BIN := $(shell pwd)/bin/md2pdf
 VERSION_FILE := $(shell pwd)/VERSION
-TEST_JOBS ?= 8
+TEST_JOBS ?= 16
 BATS_PARALLEL_FLAGS := $(shell if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then printf '%s' '--jobs $(TEST_JOBS)'; fi)
 COVERAGE_HELPER := $(shell pwd)/tests/coverage.rb
 
