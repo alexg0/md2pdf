@@ -332,20 +332,27 @@ macOS and most Linux distros).
 
 ## Testing
 
-The test suite uses [bats-core](https://github.com/bats-core/bats-core).
+The test suite uses [bats-core](https://github.com/bats-core/bats-core) and
+[GNU Parallel](https://www.gnu.org/software/parallel/) to run isolated tests
+concurrently.
 
 ```bash
-# Install bats
-brew install bats-core
+# Install test prerequisites
+brew install bats-core parallel
 
 # Run all tests
 make test
+
+# Run all tests and report merged line coverage
+make coverage
 
 # Run a specific test file
 bats tests/argument_parsing.bats
 ```
 
 Unit tests run without any rendering engine installed. Integration tests automatically skip when `pandoc` and `xelatex` are not available.
+Coverage uses Ruby's standard-library instrumentation and leaves no report
+artifacts in the worktree.
 
 ## Releasing
 

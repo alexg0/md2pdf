@@ -491,5 +491,47 @@
   - `ruby -c bin/md2pdf` passed.
   - `bats tests/unicode_normalization.bats` passed: 7 tests.
   - Real render of `Limit ≤ 10 and floor ≥ 5` produced a PDF without missing-character warnings.
-  - `make test` passed: 175 tests.
+- `make test` passed: 175 tests.
 - Lessons: none; no correction or postmortem occurred.
+
+## Test Suite Runtime
+
+- [x] Restate goal and acceptance criteria.
+  - Goal: reduce full test-suite wall time by at least 25%.
+  - Acceptance: all 167 existing tests and assertions still run and pass; measured elapsed time is at most 75% of the serial baseline.
+- [x] Locate the current test runner and isolation conventions.
+- [x] Measure the serial baseline and identify slow tests.
+- [x] Apply the smallest coverage-preserving runner optimization.
+- [x] Benchmark the optimized suite and verify the full test count.
+- [x] Record results and remaining constraints.
+
+### Working notes
+
+- Bats 1.14.0 and GNU Parallel are available locally.
+- Every test creates an independent `TEST_TEMP_DIR` and `MD2PDF_TOOL_HOME`, so test processes do not share generated artifacts.
+- Serial baseline: 149.87 seconds for 167 tests.
+- Direct `bats --jobs 8 tests/` benchmark: 37.31 seconds for the same 167 tests (75.1% faster).
+- `make test` uses eight jobs when GNU Parallel or `rush` is available and otherwise preserves the serial fallback.
+- The documented developer setup and CI install GNU Parallel so the parallel path is the normal default.
+
+### Results
+
+- `make test` now runs the suite with eight Bats jobs by default; `TEST_JOBS` can override the concurrency.
+- Serial baseline: 149.87 seconds. Optimized `make test`: 36.73 seconds, a 75.5% reduction and well beyond the required 25%.
+- A second parallel run completed in 37.31 seconds, confirming the result was repeatable.
+- Coverage-equivalent verification: all 167 tests passed in both optimized runs, `bats --count tests/` still reports 167, and no Bats test or production source file changed.
+- Environments without GNU Parallel or `rush` fall back to the original serial runner.
+- `make install-prereqs` and CI now install GNU Parallel; workflow YAML syntax and `git diff --check` pass.
+- Lessons: none; no correction or postmortem was needed.
+
+### Coverage follow-up
+
+- [x] Preserve the same 167-test suite and parallel runner.
+- [x] Add dependency-free line coverage for every `md2pdf` subprocess.
+- [x] Merge coverage data safely across parallel test jobs.
+- [x] Add `make coverage` and run it in CI without duplicating the suite.
+- [x] Measure line coverage and instrumented wall time.
+
+Coverage result: `make coverage` passed all 167 tests, covered 538 of 608
+executable lines (88.49%), and completed in 35.25 seconds. Instrumentation still
+leaves the suite 76.5% faster than the 149.87-second serial baseline.
