@@ -528,7 +528,7 @@ MODES = {
     label: "Pandoc + XeLaTeX", runtime: "pandoc, xelatex", alias_tag: " [alias: latex]",
     note: "Default mode. Pandoc + XeLaTeX with title block, margin/font/TOC support. 'latex' is an alias.",
     engine: "xelatex", font_check: true,
-    supports: %i[title author margin fontsize font toc page_numbers prevent_widows mermaid],
+    supports: %i[title author margin fontsize font toc page_numbers prevent_widows],
     deps: { cmds: %w[pandoc xelatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif], tlmgr: PANDOC_TEX_PACKAGES },
     binary: { system: "pandoc" },
@@ -538,7 +538,7 @@ MODES = {
     label: "Pandoc + LuaLaTeX", runtime: "pandoc, lualatex",
     note: "Pandoc + LuaLaTeX. Unicode font support like XeLaTeX, useful for comparing TeX engines.",
     engine: "lualatex", font_check: true,
-    supports: %i[title author margin fontsize font toc page_numbers prevent_widows mermaid],
+    supports: %i[title author margin fontsize font toc page_numbers prevent_widows],
     deps: { cmds: %w[pandoc lualatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex font-noto-serif], tlmgr: PANDOC_TEX_PACKAGES },
     binary: { system: "pandoc" },
@@ -548,7 +548,7 @@ MODES = {
     label: "Pandoc + pdfLaTeX", runtime: "pandoc, pdflatex",
     note: "Pandoc + pdfLaTeX. Best with ASCII content; Unicode and custom fonts are limited.",
     engine: "pdflatex",
-    supports: %i[title author margin fontsize toc page_numbers prevent_widows mermaid],
+    supports: %i[title author margin fontsize toc page_numbers prevent_widows],
     deps: { cmds: %w[pandoc pdflatex] },
     install: { brew: %w[pandoc], brew_cask: %w[basictex], tlmgr: PANDOC_TEX_PACKAGES },
     binary: { system: "pandoc" },
@@ -558,7 +558,7 @@ MODES = {
     label: "Pandoc + wkhtmltopdf", runtime: "pandoc, wkhtmltopdf",
     note: "Pandoc HTML pipeline + wkhtmltopdf. Margin/font via CSS. Author metadata not mapped.",
     engine: "wkhtmltopdf",
-    supports: %i[title margin fontsize font toc page_numbers prevent_widows mermaid],
+    supports: %i[title margin fontsize font toc page_numbers prevent_widows],
     deps: { cmds: %w[pandoc wkhtmltopdf] },
     install: { require: { "pandoc" => "brew install pandoc", "wkhtmltopdf" => "install via your preferred package manager" } },
     binary: { system: "pandoc" },
@@ -568,7 +568,7 @@ MODES = {
     label: "Pandoc + WeasyPrint", runtime: "pandoc, weasyprint",
     note: "Pandoc HTML pipeline + WeasyPrint. Margin/font via CSS. Author metadata not mapped.",
     engine: "weasyprint",
-    supports: %i[title margin fontsize font toc page_numbers prevent_widows mermaid],
+    supports: %i[title margin fontsize font toc page_numbers prevent_widows],
     deps: { cmds: %w[pandoc weasyprint] },
     install: { brew: %w[pandoc weasyprint] },
     binary: { system: "pandoc" },
@@ -577,7 +577,7 @@ MODES = {
   "md-to-pdf" => {
     label: "Node/Puppeteer (md-to-pdf)", runtime: "node, npm",
     note: "Puppeteer-based. Supports title, margin, font-size. Author/auto-TOC not mapped.",
-    supports: %i[title margin fontsize font page_numbers mermaid],
+    supports: %i[title margin fontsize font page_numbers],
     deps: { cmds: %w[node], npm_bin: { package: "md-to-pdf", binary: "md-to-pdf" } },
     install: { npm: "md-to-pdf" },
     binary: { npm: { package: "md-to-pdf", bin: "md-to-pdf" } },
@@ -586,7 +586,7 @@ MODES = {
   "mdpdf" => {
     label: "Node/Puppeteer (mdpdf)", runtime: "node, npm",
     note: "Puppeteer-based. Maps title, border, font-size via stylesheet. Author/auto-TOC not mapped.",
-    supports: %i[title margin fontsize font page_numbers mermaid],
+    supports: %i[title margin fontsize font page_numbers],
     deps: { cmds: %w[node], npm_bin: { package: "mdpdf", binary: "mdpdf" } },
     install: { npm: "mdpdf" },
     binary: { npm: { package: "mdpdf", bin: "mdpdf" } },
@@ -595,7 +595,7 @@ MODES = {
   "go-md2pdf" => {
     label: "Go/fpdf", runtime: "go",
     note: "Non-browser renderer. Title/author/TOC supported. No CSS margin/font-size control.",
-    supports: %i[title author toc page_numbers mermaid],
+    supports: %i[title author toc page_numbers],
     deps: { cmds: %w[go], local_bin: "go-md2pdf/bin/md2pdf" },
     install: { go: "github.com/solworktech/md2pdf/v2/cmd/md2pdf@latest" },
     binary: { local: "go-md2pdf/bin/md2pdf" },
@@ -604,7 +604,7 @@ MODES = {
   "weasy-md2pdf" => {
     label: "Python/WeasyPrint", runtime: "python3, brew",
     note: "Python + WeasyPrint. Margin/font via stylesheet. Title/author/TOC not mapped.",
-    supports: %i[margin fontsize font page_numbers mermaid],
+    supports: %i[margin fontsize font page_numbers],
     deps: { cmds: %w[python3 weasyprint], local_bin: "python/weasy-md2pdf/bin/md2pdf" },
     install: { weasy: true },
     binary: { local: "python/weasy-md2pdf/bin/md2pdf" },
@@ -613,7 +613,7 @@ MODES = {
   "percollate" => {
     label: "Experimental HTML-first", runtime: "pandoc, node, npm", extra_tag: " [experimental]",
     note: "Experimental. Converts MD to HTML via pandoc, then renders through percollate.",
-    supports: %i[title author margin fontsize font toc page_numbers mermaid],
+    supports: %i[title author margin fontsize font toc page_numbers],
     deps: { cmds: %w[pandoc node], npm_bin: { package: "percollate", binary: "percollate" } },
     install: { npm: "percollate" },
     binary: { npm: { package: "percollate", bin: "percollate" } },
@@ -623,7 +623,7 @@ MODES = {
     label: "Pandoc -> DOCX", runtime: "pandoc, zip", alias_tag: " [aliases: docx, word]",
     note: "Pandoc DOCX output. Title/author/TOC supported. Margin/font/fontsize come from --reference-doc. Aliases: 'docx', 'word'.",
     output_ext: "docx",
-    supports: %i[title author toc mermaid reference_doc],
+    supports: %i[title author toc reference_doc],
     deps: { cmds: %w[pandoc unzip zip] },
     install: { brew: %w[pandoc] },
     binary: { system: "pandoc" },
@@ -743,9 +743,8 @@ class Md2Pdf
   def list_modes
     MODES.each do |name, info|
       status = check_mode_deps(name) ? "installed" : "missing deps"
-      features = info[:supports].include?(:mermaid) ? " features=mermaid" : ""
       extra = info[:alias_tag] || info[:extra_tag] || ""
-      printf "%-20s %-28s runtime=%-20s status=%s%s%s\n", name, info[:label], info[:runtime], status, features, extra
+      printf "%-20s %-28s runtime=%-20s status=%s features=mermaid%s\n", name, info[:label], info[:runtime], status, extra
     end
   end
 
@@ -927,7 +926,7 @@ class Md2Pdf
       run_cmd({ "GOBIN" => bin_dir }, "go", "install", recipe[:go])
     end
     ensure_weasy_env if recipe[:weasy]
-    ensure_npm_package(MERMAID_NPM_PACKAGE) if MODES.fetch(name)[:supports].include?(:mermaid)
+    ensure_npm_package(MERMAID_NPM_PACKAGE)
   end
 
   # --- Config-driven unmapped option warnings ---
@@ -1209,7 +1208,6 @@ class Md2Pdf
 
   def preprocess_mermaid(content, tmpdir)
     return nil unless @mermaid
-    return nil unless supports?(:mermaid)
     return nil unless MermaidPreprocessor.has_blocks?(content)
 
     mmdc = locate_mmdc

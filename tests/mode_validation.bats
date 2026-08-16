@@ -2,67 +2,6 @@
 
 load test_helper
 
-@test "valid mode accepted: pandoc-xelatex" {
-  run "$MD2PDF" --mode pandoc-xelatex --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: latex alias" {
-  run "$MD2PDF" --mode latex --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: pandoc-lualatex" {
-  run "$MD2PDF" --mode pandoc-lualatex --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: pandoc-pdflatex" {
-  run "$MD2PDF" --mode pandoc-pdflatex --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: pandoc-wkhtmltopdf" {
-  run "$MD2PDF" --mode pandoc-wkhtmltopdf --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: pandoc-weasyprint" {
-  run "$MD2PDF" --mode pandoc-weasyprint --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: md-to-pdf" {
-  run "$MD2PDF" --mode md-to-pdf --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: mdpdf" {
-  run "$MD2PDF" --mode mdpdf --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: go-md2pdf" {
-  run "$MD2PDF" --mode go-md2pdf --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: weasy-md2pdf" {
-  run "$MD2PDF" --mode weasy-md2pdf --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: percollate" {
-  run "$MD2PDF" --mode percollate --mode-help
-  [ "$status" -eq 0 ]
-}
-
-@test "valid mode accepted: pandoc-docx" {
-  run "$MD2PDF" --mode pandoc-docx --mode-help
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"DOCX"* ]]
-}
-
 @test "docx alias resolves to pandoc-docx" {
   run "$MD2PDF" --mode docx --mode-help
   [ "$status" -eq 0 ]
@@ -127,7 +66,7 @@ load test_helper
   [[ "$output" == *"runtime=pandoc, node, npm"* ]]
 }
 
-@test "mode_note is non-empty for all modes" {
+@test "all modes are accepted and have help" {
   for m in pandoc-xelatex pandoc-lualatex pandoc-pdflatex pandoc-wkhtmltopdf pandoc-weasyprint md-to-pdf mdpdf go-md2pdf weasy-md2pdf percollate pandoc-docx; do
     run "$MD2PDF" --mode "$m" --mode-help
     [ "$status" -eq 0 ]
