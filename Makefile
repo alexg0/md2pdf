@@ -4,8 +4,11 @@ DEV_PREFIX ?= $(HOME)/.local
 DEV_BIN_DIR := $(DEV_PREFIX)/bin
 SRC_BIN := $(shell pwd)/bin/md2pdf
 VERSION_FILE := $(shell pwd)/VERSION
+TEST_JOBS ?= 16
+BATS_PARALLEL_FLAGS := $(shell if command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1; then printf '%s' '--jobs $(TEST_JOBS)'; fi)
+COVERAGE_HELPER := $(shell pwd)/tests/coverage.rb
 
-.PHONY: install install-link install-dev uninstall uninstall-dev test check-deps install-prereqs release-tag release help
+.PHONY: install install-link install-dev uninstall uninstall-dev test coverage check-deps install-prereqs release-tag release help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
@@ -47,7 +50,12 @@ uninstall-dev: ## Remove dev shim from DEV_PREFIX/bin
 
 test: ## Run test suite (requires bats-core)
 	@command -v bats >/dev/null 2>&1 || { echo "bats-core is required: run 'make install-prereqs' or 'brew install bats-core'"; exit 1; }
-	bats tests/
+	bats $(BATS_PARALLEL_FLAGS) tests/
+
+coverage: ## Run tests and report merged line coverage
+	@set -e; coverage_dir="$$(mktemp -d)"; trap 'rm -rf "$$coverage_dir"' EXIT; \
+		MD2PDF_COVERAGE_DIR="$$coverage_dir" MD2PDF_COVERAGE_TARGET="$(SRC_BIN)" RUBYOPT="-r$(COVERAGE_HELPER)$${RUBYOPT:+ $$RUBYOPT}" $(MAKE) test; \
+		MD2PDF_COVERAGE_DIR="$$coverage_dir" MD2PDF_COVERAGE_TARGET="$(SRC_BIN)" ruby "$(COVERAGE_HELPER)"
 
 check-deps: ## Check dependencies for all modes
 	./bin/md2pdf --check-deps-all
@@ -77,15 +85,14 @@ release: ## Bump, commit, tag, and push origin master + tag (triggers Homebrew t
 	@git push origin HEAD:master
 	@git push origin "v$(VERSION)"
 
-install-prereqs: ## Install development prerequisites (bats-core)
-	@if command -v bats >/dev/null 2>&1; then \
-		echo "bats-core already installed: $$(bats --version)"; \
+install-prereqs: ## Install test prerequisites (bats-core and GNU Parallel)
+	@if command -v bats >/dev/null 2>&1 && command -v parallel >/dev/null 2>&1; then \
+		echo "Test prerequisites already installed: $$(bats --version), $$(parallel --version | head -1)"; \
 	elif command -v brew >/dev/null 2>&1; then \
-		brew install bats-core; \
+		brew install bats-core parallel; \
 	elif command -v apt-get >/dev/null 2>&1; then \
-		sudo apt-get update && sudo apt-get install -y bats; \
+		sudo apt-get update && sudo apt-get install -y bats parallel; \
 	else \
-		echo "Cannot auto-install bats-core on this platform."; \
-		echo "See https://bats-core.readthedocs.io/en/stable/installation.html"; \
+		echo "Cannot auto-install bats-core and GNU Parallel on this platform."; \
 		exit 1; \
 	fi
